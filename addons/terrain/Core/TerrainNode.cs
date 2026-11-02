@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 
-namespace UnpleasantMedia.Terrain;
+namespace UnpleasantMedia.UnpleasantTerrain;
 
 /// <summary>
 /// Draws a terrain's ground (<see cref="Data"/>) with its <see cref="Material"/>, as a clipmap: a
@@ -21,7 +21,7 @@ namespace UnpleasantMedia.Terrain;
 /// </summary>
 [Tool]
 [GlobalClass]
-[Icon("res://addons/terrain/Icons/Terrain.svg")]
+[Icon("res://addons/unpleasant_terrain/Icons/Terrain.svg")]
 public partial class TerrainNode : Node3D, ITerrainGround
 {
     /// <summary>
@@ -58,7 +58,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
     private ShaderMaterial? _material;
 
     /// <summary>The shader that comes with the plugin, for a terrain given no material of its own.</summary>
-    public const string DefaultShader = "res://addons/terrain/Shaders/TerrainGround.gdshader";
+    public const string DefaultShader = "res://addons/unpleasant_terrain/Shaders/TerrainGround.gdshader";
 
     private ShaderMaterial? _defaultMaterial;
 
@@ -93,7 +93,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
         }
     }
 
-    /// <summary>The ground's material: a ShaderMaterial with a shader written for this terrain. Left empty, the default shader (addons/terrain/Shaders/TerrainGround.gdshader) is used.</summary>
+    /// <summary>The ground's material: a ShaderMaterial with a shader written for this terrain. Left empty, the default shader (addons/unpleasant_terrain/Shaders/TerrainGround.gdshader) is used.</summary>
     [Export]
     public ShaderMaterial? Material
     {

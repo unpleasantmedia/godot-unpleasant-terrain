@@ -1,6 +1,6 @@
 using Godot;
 
-namespace UnpleasantMedia.Terrain;
+namespace UnpleasantMedia.UnpleasantTerrain;
 
 /// <summary>A terrain's ground textures, in a file of their own: each one's id is its place in the list.</summary>
 [Tool]

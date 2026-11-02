@@ -1,7 +1,7 @@
 #if TOOLS
 using Godot;
 
-namespace UnpleasantMedia.Terrain.Editor;
+namespace UnpleasantMedia.UnpleasantTerrain.Editor;
 
 /// <summary>
 /// How the plugin's tool buttons look when on: filled with the editor's accent colour, with bright

@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bxj8ol12i8nf6"
-path="res://.godot/imported/Set-Height.svg-7dca5f585afa1a1fc6144457796fd17b.ctex"
+path="res://.godot/imported/Set-Height.svg-923e9b2a101b13b09e99b56fe8683aac.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://addons/terrain/Icons/Set-Height.svg"
-dest_files=["res://.godot/imported/Set-Height.svg-7dca5f585afa1a1fc6144457796fd17b.ctex"]
+source_file="res://addons/unpleasant_terrain/Icons/Set-Height.svg"
+dest_files=["res://.godot/imported/Set-Height.svg-923e9b2a101b13b09e99b56fe8683aac.ctex"]
 
 [params]
 

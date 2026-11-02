@@ -1,7 +1,7 @@
 #if TOOLS
 using Godot;
 
-namespace UnpleasantMedia.Terrain.Editor;
+namespace UnpleasantMedia.UnpleasantTerrain.Editor;
 
 /// <summary>
 /// The plugin's docks, shown only while their tool is in use (the node they edit selected): put in

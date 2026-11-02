@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 
-namespace UnpleasantMedia.Terrain.Editor;
+namespace UnpleasantMedia.UnpleasantTerrain.Editor;
 
 /// <summary>
 /// Sculpts and paints a <see cref="TerrainNode"/>'s ground in the 3D editor. With one selected,
@@ -43,7 +43,7 @@ public partial class TerrainPlugin : EditorPlugin
 
     public override void _EnterTree()
     {
-        _toolbar = GD.Load<PackedScene>("res://addons/terrain/TerrainToolbar.tscn").Instantiate<Control>();
+        _toolbar = GD.Load<PackedScene>("res://addons/unpleasant_terrain/TerrainToolbar.tscn").Instantiate<Control>();
         foreach (var brush in Enum.GetValues<Brush>().Where(b => b != Brush.None))
         {
             var button = _toolbar.GetNode<Button>(brush.ToString());
@@ -59,7 +59,7 @@ public partial class TerrainPlugin : EditorPlugin
         ToolButtons.StyleAll(_toolbar);
         AddControlToContainer(CustomControlContainer.SpatialEditorMenu, _toolbar);
 
-        _dock = GD.Load<PackedScene>("res://addons/terrain/TerrainDock.tscn").Instantiate<Control>();
+        _dock = GD.Load<PackedScene>("res://addons/unpleasant_terrain/TerrainDock.tscn").Instantiate<Control>();
         _hint = _dock.GetNode<Label>("Hint");
         _textures = _dock.GetNode<ItemList>("Textures");
         // In its slot only while the plugin is shown: see _MakeVisible.

@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://b45fkqhdcyomd"
-path="res://.godot/imported/Holes.svg-e2cb3b0af871b3d793e674a88122906e.ctex"
+path="res://.godot/imported/Holes.svg-801c9dd42916166d8e23fd3fab92eddf.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://addons/terrain/Icons/Holes.svg"
-dest_files=["res://.godot/imported/Holes.svg-e2cb3b0af871b3d793e674a88122906e.ctex"]
+source_file="res://addons/unpleasant_terrain/Icons/Holes.svg"
+dest_files=["res://.godot/imported/Holes.svg-801c9dd42916166d8e23fd3fab92eddf.ctex"]
 
 [params]
 

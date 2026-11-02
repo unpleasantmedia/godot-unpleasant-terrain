@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using Godot;
 
-namespace UnpleasantMedia.Terrain;
+namespace UnpleasantMedia.UnpleasantTerrain;
 
 /// <summary>
 /// A terrain's ground: square regions of samples, <see cref="RegionSize"/> across and

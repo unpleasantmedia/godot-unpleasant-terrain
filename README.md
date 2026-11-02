@@ -1,4 +1,4 @@
-# Godot Terrain
+# UnpleasantTerrain
 
 A terrain plugin for Godot 4.7 (.NET version). `TerrainNode` draws its ground as a clipmap and collides with it, and brushes in the 3D view sculpt and paint it.
 
@@ -20,21 +20,21 @@ A terrain plugin for Godot 4.7 (.NET version). `TerrainNode` draws its ground as
 
 ## Install
 
-The plugin must end up at exactly `addons/terrain`.
+The plugin must end up at exactly `addons/unpleasant_terrain`.
 
-**From the Asset Library:** install the asset. It comes from this repository's `release` branch, which has the files in place under `addons/terrain/`.
+**From the Asset Library:** install the asset. It comes from this repository's `release` branch, which has the files in place under `addons/unpleasant_terrain/`.
 
 **As a submodule:** use the `main` branch, which has the plugin's files at its root:
 
 ```bash
-git submodule add https://github.com/unpleasantmedia/godot-terrain.git addons/terrain
+git submodule add https://github.com/unpleasantmedia/godot-unpleasant-terrain.git addons/unpleasant_terrain
 ```
 
 ### Then, in Godot
 
 1. If the project has no `.csproj` file, choose **Project > Tools > C# > Create C# solution**.
 2. Click **Build** (the hammer at the top right).
-3. Enable **Terrain** under **Project > Project Settings > Plugins**.
+3. Enable **UnpleasantTerrain** under **Project > Project Settings > Plugins**.
 
 If you see `Unable to load addon script from path`, the project hasn't been built yet: build it, then enable the plugin again.
 
@@ -80,7 +80,7 @@ To replace it, assign a `ShaderMaterial` with your own shader. It must take the 
 
 ## Code
 
-Everything is in the `UnpleasantMedia.Terrain` namespace. `TerrainNode` reads and changes the ground through `HeightAt`, `NormalAt`, `ControlAt`, `Intersect`, `EditHeights`, `EditControl` and `Save`. `ITerrainGround` is the same idea as an interface, for code that shouldn't depend on the node.
+Everything is in the `UnpleasantMedia.UnpleasantTerrain` namespace. `TerrainNode` reads and changes the ground through `HeightAt`, `NormalAt`, `ControlAt`, `Intersect`, `EditHeights`, `EditControl` and `Save`. `ITerrainGround` is the same idea as an interface, for code that shouldn't depend on the node.
 
 ### Brush stroke event
 
@@ -89,7 +89,7 @@ Everything is in the `UnpleasantMedia.Terrain` namespace. `TerrainNode` reads an
 ```csharp
 using System.Runtime.CompilerServices;
 using Godot;
-using UnpleasantMedia.Terrain;
+using UnpleasantMedia.UnpleasantTerrain;
 
 internal static class TerrainHook
 {

@@ -1,7 +1,7 @@
 using System;
 using Godot;
 
-namespace UnpleasantMedia.Terrain;
+namespace UnpleasantMedia.UnpleasantTerrain;
 
 /// <summary>
 /// One square region of a terrain, <see cref="TerrainData.RegionSize"/> samples across, in a file of

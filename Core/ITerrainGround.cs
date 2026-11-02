@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 
-namespace UnpleasantMedia.Terrain;
+namespace UnpleasantMedia.UnpleasantTerrain;
 
 /// <summary>
 /// A level's ground as roads, towns, foliage and the editor tools use it: read anywhere, and

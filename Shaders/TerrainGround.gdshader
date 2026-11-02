@@ -1,7 +1,7 @@
 shader_type spatial;
 render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlick_ggx,skip_vertex_transform;
 
-/* The terrain's ground, as drawn by TerrainNode (addons/terrain/Core/TerrainNode.cs): ported from
+/* The terrain's ground, as drawn by TerrainNode (addons/unpleasant_terrain/Core/TerrainNode.cs): ported from
  * the shader used under Terrain3D, with the same textures, auto-shader and colours.
  * Only the vertex stage is new: the terrain is a clipmap of square rings round the camera, each
  * twice as coarse as the one inside it, and each ring's vertices morph into the next one's towards

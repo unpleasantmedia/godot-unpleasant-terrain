@@ -1,13 +1,13 @@
 [gd_scene format=3]
 
-[ext_resource type="Texture2D" uid="uid://xdvgawrkcp27" path="res://addons/terrain/Icons/Raise.svg" id="icon_Raise"]
-[ext_resource type="Texture2D" uid="uid://cd4minitws4n" path="res://addons/terrain/Icons/Lower.svg" id="icon_Lower"]
-[ext_resource type="Texture2D" uid="uid://c7ktx6lw1r2dx" path="res://addons/terrain/Icons/Smooth.svg" id="icon_Smooth"]
-[ext_resource type="Texture2D" uid="uid://cffa0a7pp8heg" path="res://addons/terrain/Icons/Flatten.svg" id="icon_Flatten"]
-[ext_resource type="Texture2D" uid="uid://bxj8ol12i8nf6" path="res://addons/terrain/Icons/Set-Height.svg" id="icon_SetHeight"]
-[ext_resource type="Texture2D" path="res://addons/terrain/Icons/Paint.svg" id="icon_Paint"]
-[ext_resource type="Texture2D" path="res://addons/terrain/Icons/Auto.svg" id="icon_Auto"]
-[ext_resource type="Texture2D" path="res://addons/terrain/Icons/Holes.svg" id="icon_Holes"]
+[ext_resource type="Texture2D" uid="uid://xdvgawrkcp27" path="res://addons/unpleasant_terrain/Icons/Raise.svg" id="icon_Raise"]
+[ext_resource type="Texture2D" uid="uid://cd4minitws4n" path="res://addons/unpleasant_terrain/Icons/Lower.svg" id="icon_Lower"]
+[ext_resource type="Texture2D" uid="uid://c7ktx6lw1r2dx" path="res://addons/unpleasant_terrain/Icons/Smooth.svg" id="icon_Smooth"]
+[ext_resource type="Texture2D" uid="uid://cffa0a7pp8heg" path="res://addons/unpleasant_terrain/Icons/Flatten.svg" id="icon_Flatten"]
+[ext_resource type="Texture2D" uid="uid://bxj8ol12i8nf6" path="res://addons/unpleasant_terrain/Icons/Set-Height.svg" id="icon_SetHeight"]
+[ext_resource type="Texture2D" path="res://addons/unpleasant_terrain/Icons/Paint.svg" id="icon_Paint"]
+[ext_resource type="Texture2D" path="res://addons/unpleasant_terrain/Icons/Auto.svg" id="icon_Auto"]
+[ext_resource type="Texture2D" path="res://addons/unpleasant_terrain/Icons/Holes.svg" id="icon_Holes"]
 
 [sub_resource type="ButtonGroup" id="Brushes"]
 allow_unpress = true

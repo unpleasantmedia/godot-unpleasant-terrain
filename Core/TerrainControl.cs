@@ -1,4 +1,4 @@
-namespace UnpleasantMedia.Terrain;
+namespace UnpleasantMedia.UnpleasantTerrain;
 
 /// <summary>
 /// A terrain sample's control word, packed as Terrain3D packed it (and as the terrain's shader

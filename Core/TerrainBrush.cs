@@ -1,7 +1,7 @@
 using System;
 using Godot;
 
-namespace UnpleasantMedia.Terrain;
+namespace UnpleasantMedia.UnpleasantTerrain;
 
 /// <summary>A finished brush stroke: the terrain it changed, and the samples it changed, as the box round them.</summary>
 public sealed class TerrainBrushStrokeEventArgs(TerrainNode terrain, Rect2I samples) : EventArgs

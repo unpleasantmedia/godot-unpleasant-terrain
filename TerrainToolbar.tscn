@@ -1,0 +1,140 @@
+[gd_scene format=3]
+
+[ext_resource type="Texture2D" uid="uid://xdvgawrkcp27" path="res://addons/terrain/Icons/Raise.svg" id="icon_Raise"]
+[ext_resource type="Texture2D" uid="uid://cd4minitws4n" path="res://addons/terrain/Icons/Lower.svg" id="icon_Lower"]
+[ext_resource type="Texture2D" uid="uid://c7ktx6lw1r2dx" path="res://addons/terrain/Icons/Smooth.svg" id="icon_Smooth"]
+[ext_resource type="Texture2D" uid="uid://cffa0a7pp8heg" path="res://addons/terrain/Icons/Flatten.svg" id="icon_Flatten"]
+[ext_resource type="Texture2D" uid="uid://bxj8ol12i8nf6" path="res://addons/terrain/Icons/Set-Height.svg" id="icon_SetHeight"]
+[ext_resource type="Texture2D" path="res://addons/terrain/Icons/Paint.svg" id="icon_Paint"]
+[ext_resource type="Texture2D" path="res://addons/terrain/Icons/Auto.svg" id="icon_Auto"]
+[ext_resource type="Texture2D" path="res://addons/terrain/Icons/Holes.svg" id="icon_Holes"]
+
+[sub_resource type="ButtonGroup" id="Brushes"]
+allow_unpress = true
+
+[node name="TerrainToolbar" type="HBoxContainer"]
+editor_description = "The terrain plugin's brushes, in the 3D view's toolbar while a TerrainNode is selected."
+
+[node name="Separator" type="VSeparator" parent="."]
+layout_mode = 2
+
+[node name="Raise" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Raise: Drag to raise the ground; ctrl-drag to lower it."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_Raise")
+
+[node name="Lower" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Lower: Drag to lower the ground; ctrl-drag to raise it."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_Lower")
+
+[node name="Smooth" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Smooth: Drag to smooth the ground out."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_Smooth")
+
+[node name="Flatten" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Flatten: Drag to flatten the ground to the height where the stroke starts."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_Flatten")
+
+[node name="SetHeight" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Set Height: Drag to bring the ground to the Height set here; ctrl-click the ground to take its height."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_SetHeight")
+
+[node name="Paint" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Paint: Drag to paint the texture picked in the Terrain dock (it takes the ground off the auto-shader)."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_Paint")
+
+[node name="Auto" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Auto: Drag to hand the ground back to the auto-shader, which picks its textures by height and slope; ctrl-drag to take it off."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_Auto")
+
+[node name="Holes" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Holes: Drag to cut holes in the ground; ctrl-drag to fill them."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_Holes")
+
+[node name="SizeLabel" type="Label" parent="."]
+layout_mode = 2
+text = "Size"
+
+[node name="Size" type="SpinBox" parent="."]
+layout_mode = 2
+tooltip_text = "How far the brush reaches from its middle."
+min_value = 1.0
+max_value = 200.0
+step = 0.5
+value = 10.0
+suffix = "m"
+
+[node name="FalloffLabel" type="Label" parent="."]
+layout_mode = 2
+text = "Falloff"
+
+[node name="Falloff" type="SpinBox" parent="."]
+layout_mode = 2
+tooltip_text = "How much of the brush fades out towards its edge: 0 is a hard edge, 1 fades all the way from the middle. The inner circle shows where the fading starts."
+max_value = 1.0
+step = 0.05
+value = 0.5
+
+[node name="StrengthLabel" type="Label" parent="."]
+layout_mode = 2
+text = "Strength"
+
+[node name="Strength" type="SpinBox" parent="."]
+layout_mode = 2
+tooltip_text = "How strongly the brush works: for Raise and Lower, metres a second at its middle; for the rest, how fast it gets there."
+min_value = 0.05
+max_value = 20.0
+step = 0.05
+value = 2.0
+
+[node name="HeightLabel" type="Label" parent="."]
+layout_mode = 2
+text = "Height"
+
+[node name="Height" type="SpinBox" parent="."]
+layout_mode = 2
+tooltip_text = "The height Set Height brings the ground to."
+min_value = -200.0
+max_value = 2000.0
+step = 0.1
+value = 10.0
+suffix = "m"

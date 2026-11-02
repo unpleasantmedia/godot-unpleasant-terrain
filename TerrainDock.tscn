@@ -1,0 +1,19 @@
+[gd_scene format=3]
+
+[node name="Terrain" type="VBoxContainer"]
+editor_description = "The terrain plugin's dock: the textures to paint with."
+
+[node name="Hint" type="Label" parent="."]
+layout_mode = 2
+text = "Select a TerrainNode to paint with its textures."
+autowrap_mode = 3
+
+[node name="Textures" type="ItemList" parent="."]
+layout_mode = 2
+size_flags_vertical = 3
+tooltip_text = "The selected TerrainNode's textures: the one picked is what Paint paints."
+max_columns = 0
+same_column_width = true
+icon_mode = 0
+fixed_icon_size = Vector2i(64, 64)
+fixed_column_width = 80

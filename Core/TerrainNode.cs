@@ -337,6 +337,63 @@ public partial class TerrainNode : Node3D, ITerrainGround
     [Signal]
     public delegate void GroundChangedEventHandler(Rect2 area);
 
+    /// <summary>Where Add Region puts a new region, in regions from the terrain's origin: -16 to 15 each way.</summary>
+    [ExportGroup("Regions")]
+    [Export]
+    public Vector2I NewRegion { get; set; }
+
+    [ExportToolButton("Add Region", Icon = "Add")]
+    public Callable AddRegionButton => Callable.From(AddNewRegion);
+
+    // Add Region pressed: a flat region at New Region, one step to undo; data and a folder for it first, if it has none.
+    private void AddNewRegion()
+    {
+        var at = NewRegion;
+        var half = RegionMapSize / 2;
+        if (at.X < -half || at.Y < -half || at.X >= half || at.Y >= half)
+        {
+            GD.PushWarning($"{Name}: New Region must be from {-half} to {half - 1} each way.");
+            return;
+        }
+
+        _data ??= new TerrainData();
+        if (string.IsNullOrEmpty(_data.Folder))
+            _data.Folder = $"res://Terrain/{Name}-Regions";
+        if (_data.Locations.Contains(at))
+        {
+            GD.PushWarning($"{Name}: it already has a region at {at}.");
+            return;
+        }
+
+#if TOOLS
+        if (Engine.IsEditorHint())
+        {
+            var undo = EditorInterface.Singleton.GetEditorUndoRedo();
+            undo.CreateAction($"Add terrain region {at}");
+            undo.AddDoMethod(this, MethodName.AddRegion, at);
+            undo.AddUndoMethod(this, MethodName.RemoveRegion, at);
+            undo.CommitAction();
+            return;
+        }
+#endif
+        AddRegion(at);
+    }
+
+    /// <summary>Adds a flat region (see <see cref="TerrainData.AddRegion"/>), and draws and collides it.</summary>
+    public void AddRegion(Vector2I location)
+    {
+        _data ??= new TerrainData();
+        if (_data.AddRegion(location))
+            Redo();
+    }
+
+    /// <summary>Takes a region away, and draws and collides what is left.</summary>
+    public void RemoveRegion(Vector2I location)
+    {
+        _data?.RemoveRegion(location);
+        Redo();
+    }
+
     /// <summary>Every terrain in the tree: for finding a level's ground without going through all the level (see TerrainGround.FindIn).</summary>
     public static readonly HashSet<TerrainNode> InTree = [];
 

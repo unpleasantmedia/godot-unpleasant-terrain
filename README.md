@@ -18,10 +18,6 @@ A terrain plugin for Godot 4.7 (.NET version). `TerrainNode` draws its ground as
 - .NET 8 SDK and C# 12
 - A C# project: this plugin can't run in a project without one
 
-## Known limitation
-
-**The plugin can't create new ground yet.** Brushes only work on regions that already exist, and a new `TerrainData` has none. A new terrain has nothing to draw or sculpt until region files are made by other means.
-
 ## Install
 
 The plugin must end up at exactly `addons/terrain`.
@@ -44,7 +40,9 @@ If you see `Unable to load addon script from path`, the project hasn't been buil
 
 ## Use
 
-Add a `TerrainNode` to a scene and select it. The brushes appear in the 3D view's toolbar, and a Terrain dock lists the textures to paint with.
+Add a `TerrainNode` to a scene and select it. In the Inspector, under **Regions**, set **New Region** (`0, 0` is at the origin; each can be -16 to 15) and press **Add Region**. That adds a flat region at height 0, as one undo step, and creates a `TerrainData` and a folder for it (`res://Terrain/<node name>-Regions`) if the node has none. Repeat for more ground. The ground is plain white until you assign **Textures**.
+
+Brushes only work on regions that exist. They appear in the 3D view's toolbar, and a Terrain dock lists the textures to paint with.
 
 | Brush | What it does | With Ctrl |
 |---|---|---|
@@ -70,7 +68,7 @@ The toolbar also sets the brush's **Size**, **Falloff** and **Strength**. Edits 
 | **Editor Collision** | Whether the ground collides in the editor as well as in the game |
 | **Collision Layer**, **Collision Mask** | Physics layers for the ground |
 
-`TerrainData` sets **Region Size** (samples across a region), **Vertex Spacing** (metres between samples), **Folder** (where region files are kept) and **Locations** (which regions it has).
+`TerrainData` sets **Region Size** (samples across a region), **Vertex Spacing** (metres between samples; set both before adding regions), **Folder** (where region files are kept) and **Locations** (which regions it has).
 
 Each `TerrainTexture` needs an **Albedo** (height in alpha) and a **Normal** (roughness in alpha), and has **Tint**, **UV Scale**, **Normal Depth**, **AO Strength** and **Roughness Mod** settings.
 

@@ -78,6 +78,39 @@ public partial class TerrainData : Resource
         return _looked[location] = region;
     }
 
+    /// <summary>Adds a flat region at height 0, left to the auto-shader, kept in memory until saved. False if it has one there.</summary>
+    public bool AddRegion(Vector2I location)
+    {
+        if (Locations.Contains(location))
+            return false;
+        var heights = Image.CreateEmpty(RegionSize, RegionSize, false, Image.Format.Rf);
+        var control = Image.CreateEmpty(RegionSize, RegionSize, false, Image.Format.Rf);
+        var colors = Image.CreateEmpty(RegionSize, RegionSize, false, Image.Format.Rgba8);
+        // A white tint, and neither wet nor dry.
+        colors.Fill(new Color(1f, 1f, 1f, 0.5f));
+        colors.GenerateMipmaps();
+        var region = new TerrainRegion { Location = location, Heights = heights, Control = control, Colors = colors, Modified = true };
+        System.Array.Fill(region.ControlValues, TerrainControl.AutoBit);
+        region.Commit(false, true);
+        _regions[location] = region;
+        _missing.Remove(location);
+        _looked.Remove(location);
+        Locations.Add(location);
+        _locationsChanged = true;
+        return true;
+    }
+
+    /// <summary>Takes a region away (its file, if it has been saved, is left unused).</summary>
+    public void RemoveRegion(Vector2I location)
+    {
+        Locations.Remove(location);
+        _regions.Remove(location);
+        _looked.Remove(location);
+        _locationsChanged = true;
+    }
+
+    private bool _locationsChanged;
+
     /// <summary>Which region a sample is in, and where in it.</summary>
     public (TerrainRegion? Region, int Index) Sample(int x, int z)
     {
@@ -139,9 +172,15 @@ public partial class TerrainData : Resource
         {
             if (region is not { Modified: true })
                 continue;
+            DirAccess.MakeDirRecursiveAbsolute(ProjectSettings.GlobalizePath(Folder));
             region.UpdateHeightRange();
             ResourceSaver.Save(region, $"{Folder}/{FileOf(region.Location)}", ResourceSaver.SaverFlags.Compress);
             region.Modified = false;
         }
+
+        // In a file of its own, not the scene: which regions it has saved there.
+        if (_locationsChanged && ResourcePath.StartsWith("res://") && !ResourcePath.Contains("::"))
+            ResourceSaver.Save(this, ResourcePath);
+        _locationsChanged = false;
     }
 }

@@ -727,6 +727,8 @@ public partial class TerrainNode : Node3D, ITerrainGround
 
     public override void _Process(double delta)
     {
+        // Rebuilding the scripts empties the list, and it does not enter the tree again.
+        InTree.Add(this);
         if (!_setUp)
             return;
         if (Engine.IsEditorHint() && ++_slotCheck >= 30)

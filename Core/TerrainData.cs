@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Godot;
 
 namespace UnpleasantMedia.UnpleasantTerrain;
@@ -35,7 +36,6 @@ public partial class TerrainData : Resource
         {
             _locations = value;
             // Looked for again, in case it has them now.
-            _missing.Clear();
             _looked.Clear();
         }
     }
@@ -46,7 +46,6 @@ public partial class TerrainData : Resource
     // scripts. A plain dictionary was lost then, and with nothing else holding them its regions
     // were let go, edits not yet saved and all, to be read again from their files.
     private Godot.Collections.Dictionary<Vector2I, TerrainRegion> _regions = new();
-    private Godot.Collections.Array<Vector2I> _missing = new();
 
     /// <summary>
     /// The regions looked up so far (missing ones as null), in a plain dictionary in front of the
@@ -67,13 +66,9 @@ public partial class TerrainData : Resource
             return known;
         if (_regions.TryGetValue(location, out var loaded))
             return _looked[location] = loaded;
-        if (_missing.Contains(location))
-            return _looked[location] = null;
         var path = $"{Folder}/{FileOf(location)}";
         var region = Locations.Contains(location) && ResourceLoader.Exists(path) ? GD.Load<TerrainRegion>(path) : null;
-        if (region is null)
-            _missing.Add(location);
-        else
+        if (region is not null)
             _regions[location] = region;
         return _looked[location] = region;
     }
@@ -93,7 +88,6 @@ public partial class TerrainData : Resource
         System.Array.Fill(region.ControlValues, TerrainControl.AutoBit);
         region.Commit(false, true);
         _regions[location] = region;
-        _missing.Remove(location);
         _looked.Remove(location);
         Locations.Add(location);
         _locationsChanged = true;
@@ -106,6 +100,23 @@ public partial class TerrainData : Resource
         Locations.Remove(location);
         _regions.Remove(location);
         _looked.Remove(location);
+        _locationsChanged = true;
+    }
+
+    /// <summary>Its regions made these (copies of them), the rest taken away.</summary>
+    public void PutRegions(Godot.Collections.Array<TerrainRegion> regions)
+    {
+        foreach (var old in Locations.ToList())
+            RemoveRegion(old);
+        foreach (var region in regions)
+        {
+            var copy = (TerrainRegion)region.Duplicate(true);
+            copy.Modified = true;
+            _regions[copy.Location] = copy;
+            _looked.Remove(copy.Location);
+            Locations.Add(copy.Location);
+        }
+
         _locationsChanged = true;
     }
 

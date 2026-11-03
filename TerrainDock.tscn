@@ -8,6 +8,11 @@ layout_mode = 2
 text = "Select a TerrainNode to paint with its textures."
 autowrap_mode = 3
 
+[node name="ImportHeightmap" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Make the selected TerrainNode's ground from a heightmap file."
+text = "Import Heightmap"
+
 [node name="Textures" type="ItemList" parent="."]
 layout_mode = 2
 size_flags_vertical = 3
@@ -17,3 +22,134 @@ same_column_width = true
 icon_mode = 0
 fixed_icon_size = Vector2i(64, 64)
 fixed_column_width = 80
+
+[node name="PaintOver" type="VBoxContainer" parent="."]
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Header" type="HBoxContainer" parent="PaintOver"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="PaintOver/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Paint over:"
+
+[node name="Clear" type="Button" parent="PaintOver/Header"]
+layout_mode = 2
+tooltip_text = "Pick none, so Paint paints over everything."
+text = "All"
+
+[node name="List" type="ItemList" parent="PaintOver"]
+layout_mode = 2
+size_flags_vertical = 3
+tooltip_text = "Paint only paints over the textures picked here (ctrl-click to pick several). With none picked, it paints over everything."
+select_mode = 1
+max_columns = 0
+same_column_width = true
+icon_mode = 0
+fixed_icon_size = Vector2i(48, 48)
+fixed_column_width = 64
+
+[node name="Shape" type="ScrollContainer" parent="."]
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Box" type="VBoxContainer" parent="Shape"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Title" type="Label" parent="Shape/Box"]
+layout_mode = 2
+text = "Brush shape:"
+
+[node name="Alphas" type="ItemList" parent="Shape/Box"]
+custom_minimum_size = Vector2(0, 170)
+layout_mode = 2
+tooltip_text = "The shape of the brush picked in the toolbar, which it remembers: images from addons/unpleasant_terrain/Brushes (their alpha, or their brightness if they have none) and noises."
+max_columns = 0
+same_column_width = true
+icon_mode = 0
+fixed_icon_size = Vector2i(64, 64)
+fixed_column_width = 80
+
+[node name="Settings" type="GridContainer" parent="Shape/Box"]
+layout_mode = 2
+columns = 2
+
+[node name="RotationLabel" type="Label" parent="Shape/Box/Settings"]
+layout_mode = 2
+text = "Rotation"
+
+[node name="Rotation" type="SpinBox" parent="Shape/Box/Settings"]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "How far the shape is turned."
+min_value = -180.0
+max_value = 180.0
+step = 1.0
+suffix = "°"
+
+[node name="RandomLabel" type="Label" parent="Shape/Box/Settings"]
+layout_mode = 2
+text = "Random"
+
+[node name="Random" type="CheckBox" parent="Shape/Box/Settings"]
+layout_mode = 2
+tooltip_text = "Turn the shape to a new random angle at each stroke, instead of by Rotation."
+
+[node name="ScaleLabel" type="Label" parent="Shape/Box/Settings"]
+layout_mode = 2
+text = "Scale"
+
+[node name="Scale" type="SpinBox" parent="Shape/Box/Settings"]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "How big the shape is against the brush: at 1 it fits across the brush, above that its edges are cut off, below that it leaves a margin."
+min_value = 0.1
+max_value = 4.0
+step = 0.05
+value = 1.0
+
+[node name="Noise" type="GridContainer" parent="Shape/Box"]
+visible = false
+layout_mode = 2
+columns = 2
+
+[node name="FeaturesLabel" type="Label" parent="Shape/Box/Noise"]
+layout_mode = 2
+text = "Features"
+
+[node name="Features" type="SpinBox" parent="Shape/Box/Noise"]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "About how many blobs of noise fit across the shape."
+min_value = 1.0
+max_value = 64.0
+step = 0.5
+value = 6.0
+
+[node name="OctavesLabel" type="Label" parent="Shape/Box/Noise"]
+layout_mode = 2
+text = "Octaves"
+
+[node name="Octaves" type="SpinBox" parent="Shape/Box/Noise"]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "How many layers of ever finer detail the noise has."
+min_value = 1.0
+max_value = 8.0
+value = 4.0
+
+[node name="SeedLabel" type="Label" parent="Shape/Box/Noise"]
+layout_mode = 2
+text = "Seed"
+
+[node name="Seed" type="SpinBox" parent="Shape/Box/Noise"]
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "Which pattern of this noise to use."
+max_value = 9999.0

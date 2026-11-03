@@ -17,7 +17,7 @@ namespace UnpleasantMedia.UnpleasantTerrain.Editor;
 [Tool]
 public partial class TerrainPlugin : EditorPlugin
 {
-    private enum Brush { None, Raise, Lower, Smooth, Flatten, SetHeight, Paint, Auto, Holes }
+    private enum Brush { None, Raise, Lower, Smooth, Flatten, Slope, SetHeight, Paint, Auto, Holes }
 
     private Control? _toolbar;
     private Control? _dock;
@@ -36,10 +36,26 @@ public partial class TerrainPlugin : EditorPlugin
     private bool _inverted;
     private float _flattenTo;
     private ulong _lastTick;
+    private float _strokeWork;
 
     // What the samples touched in this stroke were before it, for undo.
     private readonly Dictionary<(int X, int Z), float> _heightsBefore = [];
     private readonly Dictionary<(int X, int Z), uint> _controlBefore = [];
+
+    // The images a brush can take its shape from.
+    private const string ShapesFolder = "res://addons/unpleasant_terrain/Brushes";
+    private const string NoisePrefix = "noise:";
+    private const string SettingsSection = "unpleasant_terrain_brush_shapes";
+
+    // The shape this stroke uses (null: a plain circle), and how it lies. Shapes already made are kept by what they were made from.
+    private BrushAlpha? _stamp;
+    private float _stampAngle;
+    private float _stampScale = 1f;
+    private readonly Dictionary<string, BrushAlpha> _alphas = [];
+
+    // The textures this stroke paints over (none: everything), and how much of each sample it touches showed them when it started.
+    private readonly List<int> _paintOver = [];
+    private readonly Dictionary<(int X, int Z), float> _paintOverShare = [];
 
     public override void _EnterTree()
     {
@@ -100,15 +116,206 @@ public partial class TerrainPlugin : EditorPlugin
             _toolbar.QueueFree();
         }
 
+        var shapes = new Callable(this, MethodName.ShowShape);
+        var files = EditorInterface.Singleton.GetResourceFilesystem();
+        if (files.IsConnected(EditorFileSystem.SignalName.FilesystemChanged, shapes))
+            files.Disconnect(EditorFileSystem.SignalName.FilesystemChanged, shapes);
         PluginDocks.Remove(this, _dock);
+        if (_import is not null && IsInstanceValid(_import))
+            _import.QueueFree();
 
     }
+
+    // Import Heightmap pressed: its dialog, made the first time.
+    private void ImportPressed()
+    {
+        if (!Editing)
+        {
+            GD.PushWarning("Terrain: select a TerrainNode first.");
+            return;
+        }
+
+        if (_import is null || !IsInstanceValid(_import))
+        {
+            _import = GD.Load<PackedScene>("res://addons/unpleasant_terrain/Editor/HeightmapImportDialog.tscn").Instantiate<HeightmapImportDialog>();
+            EditorInterface.Singleton.GetBaseControl().AddChild(_import);
+        }
+
+        _import.Open(_terrain!);
+    }
+
+    private HeightmapImportDialog? _import;
 
     /// <summary>A brush button pressed or let go (the signal says which; either way the brush outline goes until the mouse moves).</summary>
     public void BrushToggled(bool pressed)
     {
         _brushAt = null;
         UpdateOverlays();
+        ShowShape();
+    }
+
+    /// <summary>Whether a brush takes a shape from the dock.</summary>
+    private static bool TakesShape(Brush brush) => brush is Brush.Raise or Brush.Lower or Brush.Paint or Brush.Auto;
+
+    private ItemList? Alphas => _dock?.GetNodeOrNull<ItemList>("Shape/Box/Alphas");
+
+    private SpinBox? ShapeSpin(string path) => _dock?.GetNodeOrNull<SpinBox>($"Shape/Box/{path}");
+
+    private CheckBox? ShapeRandom => _dock?.GetNodeOrNull<CheckBox>("Shape/Box/Settings/Random");
+
+    /// <summary>The dock's shape controls, showing what the brush picked in the toolbar last used.</summary>
+    private void ShowShape()
+    {
+        if (_dock?.GetNodeOrNull<Control>("Shape") is not { } section || Alphas is not { } list)
+            return;
+        var brush = Current;
+        if (_dock.GetNodeOrNull<Control>("PaintOver") is { } paintOver)
+            paintOver.Visible = brush == Brush.Paint;
+        section.Visible = TakesShape(brush);
+        if (!section.Visible)
+            return;
+        list.Clear();
+        list.AddItem("None");
+        list.SetItemMetadata(0, "");
+        foreach (var (name, type) in BrushAlpha.Noises)
+        {
+            var index = list.AddItem(name, BrushAlpha.FromNoise(type, 6f, 4, 0).Preview());
+            list.SetItemMetadata(index, NoisePrefix + name);
+        }
+
+        if (DirAccess.DirExistsAbsolute(ShapesFolder))
+        {
+            foreach (var file in DirAccess.GetFilesAt(ShapesFolder))
+            {
+                var path = $"{ShapesFolder}/{file}";
+                if (file.EndsWith(".import", StringComparison.Ordinal) || file.EndsWith(".uid", StringComparison.Ordinal)
+                    || !ResourceLoader.Exists(path, "Texture2D") || GD.Load<Texture2D>(path)?.GetImage() is not { } image)
+                    continue;
+                var index = list.AddItem(file.GetBaseName(), BrushAlpha.FromImage(image).Preview());
+                list.SetItemMetadata(index, path);
+            }
+        }
+
+        var saved = EditorInterface.Singleton.GetEditorSettings().GetProjectMetadata(SettingsSection, brush.ToString(), new Godot.Collections.Dictionary()).AsGodotDictionary();
+        double Saved(string key, double fallback) => saved.TryGetValue(key, out var value) ? value.AsDouble() : fallback;
+        var shape = saved.TryGetValue("shape", out var picked) ? picked.AsString() : "";
+        var item = Enumerable.Range(0, list.ItemCount).FirstOrDefault(i => list.GetItemMetadata(i).AsString() == shape);
+        list.Select(item);
+        ShapeSpin("Settings/Rotation")?.SetValueNoSignal(Saved("rotation", 0d));
+        ShapeSpin("Settings/Scale")?.SetValueNoSignal(Saved("scale", 1d));
+        ShapeRandom?.SetPressedNoSignal(Saved("random", 0d) != 0d);
+        ShapeSpin("Noise/Features")?.SetValueNoSignal(Saved("features", 6d));
+        ShapeSpin("Noise/Octaves")?.SetValueNoSignal(Saved("octaves", 4d));
+        ShapeSpin("Noise/Seed")?.SetValueNoSignal(Saved("seed", 0d));
+        ShowShapeSettings();
+    }
+
+    // The settings that apply: the noise's for a noise, and Rotation unless the angle is random.
+    private void ShowShapeSettings()
+    {
+        if (_dock?.GetNodeOrNull<Control>("Shape/Box/Noise") is { } noise)
+            noise.Visible = PickedShape.StartsWith(NoisePrefix, StringComparison.Ordinal);
+        if (ShapeSpin("Settings/Rotation") is { } rotation)
+            rotation.Editable = ShapeRandom?.ButtonPressed != true;
+    }
+
+    private string PickedShape =>
+        Alphas is { } list && list.GetSelectedItems() is { Length: > 0 } picked ? list.GetItemMetadata(picked[0]).AsString() : "";
+
+    // A shape control changed, by each kind of control's signal: the brush remembers it.
+    private void ShapeItemPicked(long index) => SaveShape();
+
+    private void ShapeValueChanged(double value) => SaveShape();
+
+    private void ShapeToggled(bool pressed) => SaveShape();
+
+    private void SaveShape()
+    {
+        ShowShapeSettings();
+        if (!TakesShape(Current))
+            return;
+        EditorInterface.Singleton.GetEditorSettings().SetProjectMetadata(SettingsSection, Current.ToString(), new Godot.Collections.Dictionary
+        {
+            ["shape"] = PickedShape,
+            ["rotation"] = ShapeSpin("Settings/Rotation")?.Value ?? 0d,
+            ["random"] = ShapeRandom?.ButtonPressed == true ? 1d : 0d,
+            ["scale"] = ShapeSpin("Settings/Scale")?.Value ?? 1d,
+            ["features"] = ShapeSpin("Noise/Features")?.Value ?? 6d,
+            ["octaves"] = ShapeSpin("Noise/Octaves")?.Value ?? 4d,
+            ["seed"] = ShapeSpin("Noise/Seed")?.Value ?? 0d,
+        });
+    }
+
+    /// <summary>Connects the dock's shape controls: here, not on entering the tree, which a rebuild of the scripts does not repeat.</summary>
+    private void ConnectShapeControls()
+    {
+        void Join(GodotObject? control, StringName signal, StringName method)
+        {
+            var callable = new Callable(this, method);
+            if (control is not null && !control.IsConnected(signal, callable))
+                control.Connect(signal, callable);
+        }
+
+        Join(Alphas, ItemList.SignalName.ItemSelected, MethodName.ShapeItemPicked);
+        Join(_dock?.GetNodeOrNull<Button>("PaintOver/Header/Clear"), BaseButton.SignalName.Pressed, MethodName.ClearPaintOver);
+        Join(ShapeRandom, BaseButton.SignalName.Toggled, MethodName.ShapeToggled);
+        foreach (var path in new[] { "Settings/Rotation", "Settings/Scale", "Noise/Features", "Noise/Octaves", "Noise/Seed" })
+            Join(ShapeSpin(path), Godot.Range.SignalName.ValueChanged, MethodName.ShapeValueChanged);
+        Join(EditorInterface.Singleton.GetResourceFilesystem(), EditorFileSystem.SignalName.FilesystemChanged, MethodName.ShowShape);
+    }
+
+    /// <summary>The shape picked in the dock, made the first time it is used. Null for none.</summary>
+    private BrushAlpha? PickedAlpha()
+    {
+        var shape = PickedShape;
+        if (shape == "")
+            return null;
+        if (shape.StartsWith(NoisePrefix, StringComparison.Ordinal))
+        {
+            var name = shape[NoisePrefix.Length..];
+            var (features, octaves, seed) = ((float)ShapeSpin("Noise/Features")!.Value, (int)ShapeSpin("Noise/Octaves")!.Value, (int)ShapeSpin("Noise/Seed")!.Value);
+            var key = $"{name}/{features}/{octaves}/{seed}";
+            if (!_alphas.TryGetValue(key, out var noise))
+                _alphas[key] = noise = BrushAlpha.FromNoise(BrushAlpha.Noises.First(n => n.Name == name).Type, features, octaves, seed);
+            return noise;
+        }
+
+        // Images are made anew, in case the file has changed.
+        return GD.Load<Texture2D>(shape)?.GetImage() is { } image ? BrushAlpha.FromImage(image) : null;
+    }
+
+    private ItemList? PaintOverList => _dock?.GetNodeOrNull<ItemList>("PaintOver/List");
+
+    private void ClearPaintOver() => PaintOverList?.DeselectAll();
+
+    /// <summary>How much Paint may paint a sample, by the textures it paints over: going by what the sample was when the stroke first touched it, as the paint itself changes what it shows.</summary>
+    private float PaintOverShare(int x, int z, uint control)
+    {
+        if (_paintOver.Count == 0)
+            return 1f;
+        if (_paintOverShare.TryGetValue((x, z), out var share))
+            return share;
+        var spacing = _terrain!.VertexSpacing;
+        return _paintOverShare[(x, z)] = _terrain.ShareOf(new Vector3(x * spacing, 0f, z * spacing), control, _paintOver);
+    }
+
+    /// <summary>Sets up the shape for a stroke starting now.</summary>
+    private void StartStamp()
+    {
+        _paintOver.Clear();
+        _paintOverShare.Clear();
+        if (PaintOverList is { } over)
+            _paintOver.AddRange(over.GetSelectedItems());
+        _stamp = TakesShape(Current) ? PickedAlpha() : null;
+        _stampScale = (float)(ShapeSpin("Settings/Scale")?.Value ?? 1d);
+        _stampAngle = ShapeRandom?.ButtonPressed == true ? GD.Randf() * MathF.Tau : Mathf.DegToRad((float)(ShapeSpin("Settings/Rotation")?.Value ?? 0d));
+    }
+
+    /// <summary>How much a shape works at a point, given as where it is across the brush (-1 to 1 each way from its middle).</summary>
+    internal static float StampAt(BrushAlpha stamp, Vector2 across, float angle, float scale)
+    {
+        var turned = across.Rotated(-angle) / scale;
+        return stamp.Sample(turned.X * 0.5f + 0.5f, turned.Y * 0.5f + 0.5f);
     }
 
     public override bool _Handles(GodotObject @object) => @object is TerrainNode;
@@ -124,6 +331,12 @@ public partial class TerrainPlugin : EditorPlugin
     public override void _MakeVisible(bool visible)
     {
         PluginDocks.Show(this, _dock, visible);
+        // Here, not on entering the tree, which a rebuild of the scripts does not repeat.
+        var pressed = new Callable(this, MethodName.ImportPressed);
+        if (_dock?.GetNodeOrNull<Button>("ImportHeightmap") is { } import && !import.IsConnected(BaseButton.SignalName.Pressed, pressed))
+            import.Connect(BaseButton.SignalName.Pressed, pressed);
+        ConnectShapeControls();
+        ShowShape();
         if (_toolbar is not null)
             _toolbar.Visible = visible;
         if (!visible)
@@ -140,6 +353,9 @@ public partial class TerrainPlugin : EditorPlugin
             return;
         var picked = _textures.GetSelectedItems().FirstOrDefault(-1);
         _textures.Clear();
+        var over = PaintOverList;
+        var overPicked = over?.GetSelectedItems() ?? [];
+        over?.Clear();
         var list = _terrain?.Textures?.Textures;
         if (_hint is not null)
             _hint.Text = _terrain is null ? "Select a TerrainNode to paint with its textures."
@@ -151,6 +367,13 @@ public partial class TerrainPlugin : EditorPlugin
         {
             var index = _textures.AddItem(texture?.Name ?? "", texture?.Albedo);
             _textures.SetItemTooltip(index, $"{texture?.Name} (id {index})");
+            over?.AddItem(texture?.Name ?? "", texture?.Albedo);
+        }
+
+        foreach (var index in overPicked)
+        {
+            if (index < over!.ItemCount)
+                over.Select(index, false);
         }
 
         _textures.Select(picked >= 0 && picked < _textures.ItemCount ? picked : 0);
@@ -200,6 +423,8 @@ public partial class TerrainPlugin : EditorPlugin
                     _lastTick = Godot.Time.GetTicksMsec();
                     _heightsBefore.Clear();
                     _controlBefore.Clear();
+                    _strokeWork = 0f;
+                    StartStamp();
                     Work(1f / 30f);
                     return (int)AfterGuiInput.Stop;
                 }
@@ -257,6 +482,15 @@ public partial class TerrainPlugin : EditorPlugin
             return 0.5f + 0.5f * Mathf.Cos((distance - (1f - fade)) / fade * Mathf.Pi);
         }
 
+        // The falloff with the brush's shape over it.
+        float Shaped(int x, int z)
+        {
+            var falloff = Falloff(x, z);
+            if (_stamp is null || falloff <= 0f)
+                return falloff;
+            return falloff * StampAt(_stamp, (new Vector2(x, z) - middle) * spacing / radius, _stampAngle, _stampScale);
+        }
+
         // How far towards a target a sample moves now: by strength a second, at most all the way.
         float Towards(float falloff) => Mathf.Clamp(falloff * strength * seconds, 0f, 1f);
 
@@ -265,7 +499,7 @@ public partial class TerrainPlugin : EditorPlugin
         {
             case Brush.Raise or Brush.Lower:
                 var sign = (brush == Brush.Raise) != _inverted ? 1f : -1f;
-                EditHeights(samples, (x, z, h) => h + sign * strength * seconds * Falloff(x, z));
+                EditHeights(samples, (x, z, h) => h + sign * strength * seconds * Shaped(x, z));
                 break;
             case Brush.Smooth:
                 // Towards the mean of the sample and its eight neighbours, as they were before this touch.
@@ -298,16 +532,22 @@ public partial class TerrainPlugin : EditorPlugin
             case Brush.Flatten:
                 EditHeights(samples, (x, z, h) => Mathf.Lerp(h, _flattenTo, Towards(Falloff(x, z))));
                 break;
+            case Brush.Slope:
+                if (_terrain.SlopeAcross(middle, radius / spacing, (x, z, h) => _heightsBefore.GetValueOrDefault((x, z), h)) is { } slope)
+                    EditHeights(samples, (x, z, h) => Mathf.Lerp(h, slope(x, z), Towards(Falloff(x, z))));
+                break;
             case Brush.SetHeight:
                 var height = (float)_height!.Value;
                 EditHeights(samples, (x, z, h) => Mathf.Lerp(h, height, Towards(Falloff(x, z))));
                 break;
             case Brush.Paint:
                 var id = _textures?.GetSelectedItems().FirstOrDefault(0) ?? 0;
-                EditControl(samples, (x, z, c) => Painted(c, id, Falloff(x, z) * Mathf.Clamp(strength * seconds * 4f, 0f, 1f), Falloff(x, z)));
+                var (blendStep, paintSteps) = WorkSteps(strength * seconds);
+                EditControl(samples, (x, z, c) => Painted(c, id, Shaped(x, z) * PaintOverShare(x, z, c), blendStep, paintSteps));
                 break;
             case Brush.Auto:
-                EditControl(samples, (x, z, c) => Falloff(x, z) > 0.3f ? TerrainControl.With(c, TerrainControl.AutoBit, !_inverted) : c);
+                var (_, autoSteps) = WorkSteps(strength * seconds);
+                EditControl(samples, (x, z, c) => _inverted ? TakenOffAuto(c, Shaped(x, z), autoSteps) : GivenToAuto(c, Shaped(x, z), autoSteps));
                 break;
             case Brush.Holes:
                 EditControl(samples, (x, z, c) => Falloff(x, z) > 0.3f ? TerrainControl.With(c, TerrainControl.HoleBit, !_inverted) : c);
@@ -316,22 +556,45 @@ public partial class TerrainPlugin : EditorPlugin
     }
 
     /// <summary>
-    /// A sample painted with a texture this much: off the auto-shader, with the texture blended in
-    /// over what it had (as its overlay), until it is all that texture (its base). A sample still
-    /// under the auto-shader (whose textures are only known to the shader) takes the texture
-    /// outright where the brush is at least half strength (by its falloff), there at once.
+    /// What this much more of the stroke's work comes to in what control words can hold: a blend,
+    /// in its steps of 1/255, and whole steps of the auto level. Counted over the stroke, as a
+    /// frame's share at low strength can be less than one step.
     /// </summary>
-    private static uint Painted(uint control, int id, float amount, float falloff)
+    private (float Blend, int Auto) WorkSteps(float work)
     {
-        if (amount <= 0f)
+        var before = _strokeWork;
+        _strokeWork += work;
+        return ((Mathf.FloorToInt(_strokeWork * 255f) - Mathf.FloorToInt(before * 255f)) / 255f,
+            Mathf.FloorToInt(_strokeWork * TerrainControl.FullAuto) - Mathf.FloorToInt(before * TerrainControl.FullAuto));
+    }
+
+    /// <summary>
+    /// A sample painted with a texture where the brush works this much (its falloff and shape), by
+    /// these steps: it comes in up to that much and no further, however long the brush is held, so the
+    /// brush's edge stays soft. The auto-shader gives way by as much, with the painted texture
+    /// showing in its place.
+    /// </summary>
+    internal static uint Painted(uint control, int id, float shape, float blendStep, int autoSteps)
+    {
+        if (shape <= 0f)
             return control;
-        var manual = TerrainControl.With(control, TerrainControl.AutoBit, false);
+        var wasAuto = TerrainControl.AutoLevel(control);
+        var nowAuto = LessAuto(wasAuto, shape, autoSteps);
+        if (wasAuto == TerrainControl.FullAuto && nowAuto == wasAuto)
+            return control;
+        var word = TerrainControl.WithAutoLevel(control, nowAuto);
+        // All auto until now: what it had underneath never showed, so it is all this texture.
+        if (wasAuto == TerrainControl.FullAuto)
+            return TerrainControl.WithTextures(word, id, id, 0f);
         int first = TerrainControl.Base(control), second = TerrainControl.Overlay(control);
         var blend = TerrainControl.Blend(control);
-        // Off the auto-shader, or already this texture underneath: it all goes to the texture.
-        if (TerrainControl.IsAuto(control) || first == id && (second == id || blend <= 0f))
-            return falloff >= 0.5f || !TerrainControl.IsAuto(control) ? TerrainControl.WithTextures(manual, id, id, 0f) : control;
-        if (second != id)
+        if (first == id && (second == id || blend <= 0f) || second == id && blend >= 1f)
+            return TerrainControl.WithTextures(word, id, id, 0f);
+        if (first == id)
+        {
+            (first, second, blend) = (second, id, 1f - blend);
+        }
+        else if (second != id)
         {
             // The texture comes in over whichever of the two shows most now.
             first = blend < 0.5f ? first : second;
@@ -339,8 +602,28 @@ public partial class TerrainPlugin : EditorPlugin
             blend = 0f;
         }
 
-        blend = Mathf.Min(blend + amount, 1f);
-        return blend >= 1f ? TerrainControl.WithTextures(manual, id, id, 0f) : TerrainControl.WithTextures(manual, first, second, blend);
+        blend = Mathf.Max(blend, Mathf.Min(blend + blendStep, shape));
+        return blend >= 1f ? TerrainControl.WithTextures(word, id, id, 0f) : TerrainControl.WithTextures(word, first, second, blend);
+    }
+
+    /// <summary>A sample handed back to the auto-shader: up to as much as the brush works there.</summary>
+    internal static uint GivenToAuto(uint control, float shape, int steps)
+    {
+        var level = TerrainControl.AutoLevel(control);
+        var most = Mathf.RoundToInt(shape * TerrainControl.FullAuto);
+        return TerrainControl.WithAutoLevel(control, Mathf.Max(level, Mathf.Min(level + steps, most)));
+    }
+
+    /// <summary>A sample taken off the auto-shader: by as much as the brush works there.</summary>
+    internal static uint TakenOffAuto(uint control, float shape, int steps) =>
+        TerrainControl.WithAutoLevel(control, LessAuto(TerrainControl.AutoLevel(control), shape, steps));
+
+    private static int LessAuto(int level, float shape, int steps)
+    {
+        if (shape <= 0f)
+            return level;
+        var least = Mathf.RoundToInt((1f - shape) * TerrainControl.FullAuto);
+        return Mathf.Min(level, Mathf.Max(level - steps, least));
     }
 
     /// <summary>Changes heights, keeping what each sample was before the stroke first touched it.</summary>
@@ -412,10 +695,17 @@ public partial class TerrainPlugin : EditorPlugin
             Circle(overlay, centre, inner, colour with { A = 0.6f }, 1.5f);
     }
 
-    /// <summary>A circle drawn over the ground, following its heights.</summary>
+    /// <summary>A circle drawn over the ground, following its heights: the parts in front of the camera, as a big one can reach behind it.</summary>
     private void Circle(Control overlay, Vector3 centre, float radius, Color colour, float width)
     {
         var points = new List<Vector2>();
+        void Draw()
+        {
+            if (points.Count >= 2)
+                overlay.DrawPolyline([.. points], colour, width, true);
+            points.Clear();
+        }
+
         for (var i = 0; i <= 64; i++)
         {
             var angle = i * MathF.Tau / 64f;
@@ -424,11 +714,12 @@ public partial class TerrainPlugin : EditorPlugin
             if (!float.IsNaN(ground))
                 at.Y = ground;
             if (_camera!.IsPositionBehind(at))
-                return;
-            points.Add(_camera.UnprojectPosition(at));
+                Draw();
+            else
+                points.Add(_camera.UnprojectPosition(at));
         }
 
-        overlay.DrawPolyline([.. points], colour, width, true);
+        Draw();
     }
 
     /// <summary>Where the mouse is on the terrain's ground.</summary>

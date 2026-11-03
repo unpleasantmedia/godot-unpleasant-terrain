@@ -4,6 +4,7 @@
 [ext_resource type="Texture2D" uid="uid://cd4minitws4n" path="res://addons/unpleasant_terrain/Icons/Lower.svg" id="icon_Lower"]
 [ext_resource type="Texture2D" uid="uid://c7ktx6lw1r2dx" path="res://addons/unpleasant_terrain/Icons/Smooth.svg" id="icon_Smooth"]
 [ext_resource type="Texture2D" uid="uid://cffa0a7pp8heg" path="res://addons/unpleasant_terrain/Icons/Flatten.svg" id="icon_Flatten"]
+[ext_resource type="Texture2D" path="res://addons/unpleasant_terrain/Icons/Slope.svg" id="icon_Slope"]
 [ext_resource type="Texture2D" uid="uid://bxj8ol12i8nf6" path="res://addons/unpleasant_terrain/Icons/Set-Height.svg" id="icon_SetHeight"]
 [ext_resource type="Texture2D" path="res://addons/unpleasant_terrain/Icons/Paint.svg" id="icon_Paint"]
 [ext_resource type="Texture2D" path="res://addons/unpleasant_terrain/Icons/Auto.svg" id="icon_Auto"]
@@ -54,6 +55,15 @@ flat = true
 theme_override_constants/icon_max_width = 20
 icon = ExtResource("icon_Flatten")
 
+[node name="Slope" type="Button" parent="."]
+layout_mode = 2
+tooltip_text = "Slope: Drag to make a straight slope across the brush, from the lowest point inside it to the highest."
+toggle_mode = true
+button_group = SubResource("Brushes")
+flat = true
+theme_override_constants/icon_max_width = 20
+icon = ExtResource("icon_Slope")
+
 [node name="SetHeight" type="Button" parent="."]
 layout_mode = 2
 tooltip_text = "Set Height: Drag to bring the ground to the Height set here; ctrl-click the ground to take its height."
@@ -98,7 +108,7 @@ text = "Size"
 layout_mode = 2
 tooltip_text = "How far the brush reaches from its middle."
 min_value = 1.0
-max_value = 200.0
+max_value = 500.0
 step = 0.5
 value = 10.0
 suffix = "m"

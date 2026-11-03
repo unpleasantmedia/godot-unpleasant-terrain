@@ -31,14 +31,21 @@ public partial class TerrainRegion : Resource
     [Export]
     public Vector2 HeightRange { get; set; }
 
-    private float[]? _heights;
+    // In a class of its own, for the editor to leave alone as it rebuilds the scripts: it would keep
+    // a float[] itself, and not whole, where the images (which edits are committed to) are read again.
+    private sealed class HeightCache(float[] values)
+    {
+        public readonly float[] Values = values;
+    }
+
+    private HeightCache? _heights;
     private uint[]? _control;
 
     /// <summary>Whether it has edits not yet saved.</summary>
     public bool Modified { get; set; }
 
     /// <summary>Its heights, row by row (z then x).</summary>
-    public float[] HeightValues => _heights ??= Floats(Heights);
+    public float[] HeightValues => (_heights ??= new HeightCache(Floats(Heights))).Values;
 
     /// <summary>Its control words, row by row (z then x).</summary>
     public uint[] ControlValues => _control ??= Words(Control);
@@ -47,7 +54,7 @@ public partial class TerrainRegion : Resource
     public void Commit(bool heights, bool control)
     {
         if (heights && _heights is not null && Heights is not null)
-            Heights.SetData(Heights.GetWidth(), Heights.GetHeight(), false, Image.Format.Rf, Bytes(_heights));
+            Heights.SetData(Heights.GetWidth(), Heights.GetHeight(), false, Image.Format.Rf, Bytes(_heights.Values));
         if (control && _control is not null && Control is not null)
             Control.SetData(Control.GetWidth(), Control.GetHeight(), false, Image.Format.Rf, Bytes(_control));
         Modified = true;

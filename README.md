@@ -4,10 +4,11 @@ A terrain plugin for Godot 4.7 (.NET version). `TerrainNode` draws its ground as
 
 ## Features
 
-- Sculpting brushes: Raise, Lower, Smooth, Flatten and Set Height
+- Sculpting brushes: Raise, Lower, Smooth, Flatten, Slope and Set Height
+- Importing a heightmap (PNG, EXR, TIFF or 16-bit RAW) to generate the ground
 - Painting with up to 32 textures, or an auto-shader that picks textures by height and slope
 - Holes in the ground
-- A ground shader included, which you can replace with your own
+- Two ground shaders included, one a visual shader you can edit as a graph; replace them with your own if you like
 - Ground split into regions, with only changed regions written when you save
 - One undo step per brush stroke
 - An event when a brush stroke finishes, for other code to react to
@@ -40,7 +41,9 @@ If you see `Unable to load addon script from path`, the project hasn't been buil
 
 ## Use
 
-Add a `TerrainNode` to a scene and select it. In the Inspector, under **Regions**, set **New Region** (`0, 0` is at the origin; each can be -16 to 15) and press **Add Region**. That adds a flat region at height 0, as one undo step, and creates a `TerrainData` and a folder for it (`res://Terrain/<node name>-Regions`) if the node has none. Repeat for more ground. The ground is plain white until you assign **Textures**.
+Add a `TerrainNode` to a scene and select it. In the Inspector, under **Regions**, set **New Region** (`0, 0` is at the origin; each can be -16 to 15) and press **Add Region**. That adds a flat region at height 0, as one undo step, and creates a `TerrainData` and a folder for it (`res://Terrain/<node name>-Regions`) if the node has none. Repeat for more ground. With no **Textures** assigned, the ground is drawn in the shader's flat colours, picked by height and slope.
+
+To generate ground from a heightmap, select the node and press **Import Heightmap** in the Terrain dock. Choose the file, the **Width** in metres, and the **Min Height** and **Max Height** that black and white stand for. **Existing Regions** either replaces all regions, or overwrites heights only where the map lands and keeps the rest. The map is centred on the terrain's origin. 16-bit files give much smoother ground than 8-bit ones. TIFF files must use strips (not tiles), with no compression, LZW or Deflate. Floating-point files (EXR, 32-bit float TIFF) are scaled from their own lowest and highest values to Min Height and Max Height.
 
 Brushes only work on regions that exist. They appear in the 3D view's toolbar, and a Terrain dock lists the textures to paint with.
 
@@ -50,19 +53,24 @@ Brushes only work on regions that exist. They appear in the 3D view's toolbar, a
 | **Lower** | Lowers the ground | Raises it |
 | **Smooth** | Smooths the ground out | |
 | **Flatten** | Flattens to the height where the stroke starts | |
+| **Slope** | Makes a straight slope across the brush, from the lowest point inside it to the highest | |
 | **Set Height** | Brings the ground to the Height setting | Click takes the height from the ground |
 | **Paint** | Paints the texture picked in the dock | |
 | **Auto** | Hands the ground back to the auto-shader | Takes it off the auto-shader |
 | **Holes** | Cuts holes | Fills them |
 
+With Paint picked, **Paint over** in the dock limits it to the textures picked there, or everything if none are.
+
 The toolbar also sets the brush's **Size**, **Falloff** and **Strength**. Edits are written when you save the scene.
+
+Raise, Lower, Paint and Auto can each have their own shape, picked under **Brush shape** in the Terrain dock: a noise, or an image in `addons/unpleasant_terrain/Brushes`. An image's alpha is used, or its brightness if it has no alpha. The shape moves with the brush and is multiplied by its falloff. Each brush also remembers its **Rotation** (or **Random**, a new angle per stroke) and **Scale**, and a noise's **Features**, **Octaves** and **Seed**.
 
 ### TerrainNode settings
 
 | Setting | What it does |
 |---|---|
 | **Data** | A `TerrainData` resource holding the ground |
-| **Material** | A `ShaderMaterial`; left empty, the included shader is used |
+| **Material** | A `ShaderMaterial`; every terrain starts with its own copy of `Shaders/TerrainGroundDefault.tres`, and clearing this goes back to a new copy |
 | **Textures** | A `TerrainTextureList` resource of ground textures; their order is the order in the dock |
 | **Levels** | How many rings of detail are drawn |
 | **Editor Collision** | Whether the ground collides in the editor as well as in the game |
@@ -74,9 +82,14 @@ Each `TerrainTexture` needs an **Albedo** (height in alpha) and a **Normal** (ro
 
 ### Shader
 
-With **Material** empty, the terrain uses `Shaders/TerrainGround.gdshader`. To change its settings, such as the auto-shader's heights and slopes, assign a `ShaderMaterial` using that shader.
+The plugin comes with two shaders. With **Material** empty, the terrain always uses the first:
 
-To replace it, assign a `ShaderMaterial` with your own shader. It must take the private uniforms `TerrainNode` sets (the ones starting with `_`), as the included shader does.
+- The default: a visual shader made entirely of nodes, generated for your Textures (4 to 32 slots) and saved next to the terrain's data as `<Data name>Ground.tres`. It's rebuilt when the number of Textures or their **Is Paving** boxes change, so **hand edits to a generated graph are lost**; to keep edits, save a copy under another name and assign it in a material (a copy keeps the generated marker, so remove the `terrain_ground_signature` metadata). Its settings are grouped on the `TerrainNode`: **Flat Colours**, **Auto Shader**, **Blending**, **Paving** and **Distance Tiling**. Each texture has its own **Flat Color**, **Flat Roughness**, **Is Paving** and **Auto Shader** rules: a height and slope range and a layer. Higher layers cover lower ones, textures on one layer share the ground they both claim, and ground no rule claims shows the first texture. **Paving Edge Hardness** sets how sharply paving meets the ground: 1 is a clean line, 0 a wide blend. With no Textures, it uses six plain colours, with slots 4 and 5 as paving.
+- `Shaders/TerrainGround.gdshader`: a code shader with up to 32 Textures, macro variation, and flat colours with patches and ragged edges. To use it, assign a `ShaderMaterial` with this shader.
+
+To change settings, or to edit the graph without changing the plugin's copy, assign a `ShaderMaterial` using a copy of either shader.
+
+To replace it, assign a `ShaderMaterial` with your own shader. It must take the private uniforms `TerrainNode` sets (the ones starting with `_`), as the included shaders do.
 
 ## Code
 

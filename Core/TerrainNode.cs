@@ -57,14 +57,55 @@ public partial class TerrainNode : Node3D, ITerrainGround
     private TerrainData? _data;
     private ShaderMaterial? _material;
 
-    /// <summary>The shader that comes with the plugin, for a terrain given no material of its own.</summary>
-    public const string DefaultShader = "res://addons/unpleasant_terrain/Shaders/TerrainGround.gdshader";
+    /// <summary>The material a terrain starts with, of the visual shader: colours by height and slope, its nodes editable.</summary>
+    public const string DefaultShader = "res://addons/unpleasant_terrain/Shaders/TerrainGroundVisual.tres";
 
-    private ShaderMaterial? _defaultMaterial;
+    public const string DefaultMaterial = "res://addons/unpleasant_terrain/Shaders/TerrainGroundDefault.tres";
 
-    /// <summary>What it is drawn with: its own material, or else one of the default shader.</summary>
-    private ShaderMaterial Drawn => _material ?? (_defaultMaterial ??= new ShaderMaterial { Shader = GD.Load<Shader>(DefaultShader) });
+    /// <summary>What it is drawn with: its own material, or else its own copy of the default one (a material holds its terrain's maps, so terrains can't share one).</summary>
+    private ShaderMaterial Drawn => _material ??= (ShaderMaterial)GD.Load<ShaderMaterial>(DefaultMaterial).Duplicate();
     private TerrainTextureList? _textures;
+    private bool _useFlatColours;
+    private float _edgeHeightNoise = 1.5f;
+    private float _edgeSlopeNoise = 4f;
+    private float _edgeNoiseSize = 25f;
+    private float _blendSharpness = 0.5f;
+    private float _pavingEdgeHardness = 1f;
+    private float _farUvScale = 0.2f;
+    private float _farBlendStart = 15f;
+    private float _farBlendEnd = 90f;
+    private float _farBlendAmount = 1f;
+    private float _farRotation = 0.7f;
+    private float _farthestUvScale = 0.04f;
+    private float _farthestBlendStart = 150f;
+    private float _farthestBlendEnd = 600f;
+    private float _farthestBlendAmount = 1f;
+    private float _farthestRotation = 2.1f;
+
+    /// <summary>Whether it is drawn with a generated shader, rather than one of your own.</summary>
+    private bool Generated => Drawn.Shader is { } shader && (shader.HasMeta(TerrainGroundBuilder.SignatureMeta) || shader.ResourcePath == DefaultShader);
+
+    /// <summary>What its generated shader was built for. Empty if that isn't known (the default shader, saved over by an editor holding an older copy), so it is built again.</summary>
+    private string BuiltSignature => Drawn.Shader.GetMeta(TerrainGroundBuilder.SignatureMeta, "").AsString();
+
+    /// <summary>How many texture slots its shader has.</summary>
+    private int _slots;
+    private string _slotValues = "";
+    private int _slotCheck;
+
+    private readonly record struct AutoRule(int Layer, float MinHeight, float MaxHeight, float HeightBlend, float MinSlope, float MaxSlope, float SlopeBlend);
+
+    // With no textures, the rules for those plain colours: Dry Grass under everything, then Grass, then Sand, with Rock on top.
+    private static readonly Dictionary<int, AutoRule> PlainRules = new()
+    {
+        [0] = new(1, -10000f, 200f, 30f, -90f, 26f, 4f),
+        [1] = new(3, -10000f, 10000f, 1f, 38f, 180f, 4f),
+        [2] = new(2, -10000f, 3.5f, 1.5f, -90f, 26f, 4f),
+        [3] = new(0, -10000f, 10000f, 1f, -90f, 180f, 4f),
+    };
+
+    // With no textures, the slots a terrain usually has, in plain colours: Grass, Rock, Sand, Dry Grass, Asphalt, Sidewalk.
+    private static readonly Color[] PlainColors = [new(0.29f, 0.37f, 0.18f), new(0.37f, 0.36f, 0.34f), new(0.70f, 0.62f, 0.47f), new(0.52f, 0.47f, 0.30f), new(0.20f, 0.19f, 0.18f), new(0.62f, 0.61f, 0.58f)];
     private int _levels = 8;
 
     // Godot's own collections, and not readonly: the editor keeps these when it reloads the
@@ -93,11 +134,11 @@ public partial class TerrainNode : Node3D, ITerrainGround
         }
     }
 
-    /// <summary>The ground's material: a ShaderMaterial with a shader written for this terrain. Left empty, the default shader (addons/unpleasant_terrain/Shaders/TerrainGround.gdshader) is used.</summary>
+    /// <summary>The ground's material. Its copy of the default one (Shaders/TerrainGroundDefault.tres, which clearing this goes back to) has a graph built for its textures, set up by the settings below; or assign a ShaderMaterial with a shader written for this terrain.</summary>
     [Export]
     public ShaderMaterial? Material
     {
-        get => _material;
+        get => Drawn;
         set
         {
             _material = value;
@@ -128,6 +169,137 @@ public partial class TerrainNode : Node3D, ITerrainGround
         }
     }
 
+    /// <summary>A setting of the generated ground shader, passed on to it now. A material with a shader of your own keeps its own.</summary>
+    private void Setting(ref float field, float value, string parameter)
+    {
+        field = value;
+        if (Generated)
+            RenderingServer.MaterialSetParam(Drawn.GetRid(), parameter, value);
+    }
+
+    [ExportGroup("Flat Colours")]
+    [Export]
+    public bool UseFlatColours
+    {
+        get => _useFlatColours;
+        set
+        {
+            _useFlatColours = value;
+            if (Generated)
+                RenderingServer.MaterialSetParam(Drawn.GetRid(), "use_flat_colours", value);
+        }
+    }
+
+    [ExportGroup("Auto Shader")]
+    [Export(PropertyHint.Range, "0,20,0.1")]
+    public float EdgeHeightNoise
+    {
+        get => _edgeHeightNoise;
+        set => Setting(ref _edgeHeightNoise, value, "edge_height_noise");
+    }
+
+    [Export(PropertyHint.Range, "0,20,0.1")]
+    public float EdgeSlopeNoise
+    {
+        get => _edgeSlopeNoise;
+        set => Setting(ref _edgeSlopeNoise, value, "edge_slope_noise");
+    }
+
+    [Export(PropertyHint.Range, "1,200,1")]
+    public float EdgeNoiseSize
+    {
+        get => _edgeNoiseSize;
+        set => Setting(ref _edgeNoiseSize, value, "edge_noise_size");
+    }
+
+    [ExportGroup("Blending")]
+    [Export(PropertyHint.Range, "0,1,0.01")]
+    public float BlendSharpness
+    {
+        get => _blendSharpness;
+        set => Setting(ref _blendSharpness, value, "blend_sharpness");
+    }
+
+    [ExportGroup("Paving")]
+    [Export(PropertyHint.Range, "0,1,0.01")]
+    public float PavingEdgeHardness
+    {
+        get => _pavingEdgeHardness;
+        set => Setting(ref _pavingEdgeHardness, value, "paving_edge_hardness");
+    }
+
+    [ExportGroup("Distance Tiling")]
+    [Export(PropertyHint.Range, "0.02,1,0.01")]
+    public float FarUvScale
+    {
+        get => _farUvScale;
+        set => Setting(ref _farUvScale, value, "far_uv_scale");
+    }
+
+    [Export(PropertyHint.Range, "0,500,1")]
+    public float FarBlendStart
+    {
+        get => _farBlendStart;
+        set => Setting(ref _farBlendStart, value, "far_blend_start");
+    }
+
+    [Export(PropertyHint.Range, "0,2000,1")]
+    public float FarBlendEnd
+    {
+        get => _farBlendEnd;
+        set => Setting(ref _farBlendEnd, value, "far_blend_end");
+    }
+
+    [Export(PropertyHint.Range, "0,1,0.01")]
+    public float FarBlendAmount
+    {
+        get => _farBlendAmount;
+        set => Setting(ref _farBlendAmount, value, "far_blend_amount");
+    }
+
+    [Export(PropertyHint.Range, "0,6.283,0.01")]
+    public float FarRotation
+    {
+        get => _farRotation;
+        set => Setting(ref _farRotation, value, "far_rotation");
+    }
+
+    [Export(PropertyHint.Range, "0.005,1,0.005")]
+    public float FarthestUvScale
+    {
+        get => _farthestUvScale;
+        set => Setting(ref _farthestUvScale, value, "farthest_uv_scale");
+    }
+
+    [Export(PropertyHint.Range, "0,2000,1")]
+    public float FarthestBlendStart
+    {
+        get => _farthestBlendStart;
+        set => Setting(ref _farthestBlendStart, value, "farthest_blend_start");
+    }
+
+    [Export(PropertyHint.Range, "0,4000,1")]
+    public float FarthestBlendEnd
+    {
+        get => _farthestBlendEnd;
+        set => Setting(ref _farthestBlendEnd, value, "farthest_blend_end");
+    }
+
+    [Export(PropertyHint.Range, "0,1,0.01")]
+    public float FarthestBlendAmount
+    {
+        get => _farthestBlendAmount;
+        set => Setting(ref _farthestBlendAmount, value, "farthest_blend_amount");
+    }
+
+    [Export(PropertyHint.Range, "0,6.283,0.01")]
+    public float FarthestRotation
+    {
+        get => _farthestRotation;
+        set => Setting(ref _farthestRotation, value, "farthest_rotation");
+    }
+
+    [ExportGroup("")]
     /// <summary>Whether it collides in the editor too (in the game it always does).</summary>
     [Export]
     public bool EditorCollision
@@ -180,6 +352,45 @@ public partial class TerrainNode : Node3D, ITerrainGround
     /// </summary>
     public void EditHeights(Rect2I samples, System.Func<int, int, float, float> change) =>
         Edit(Block(samples), true, (x, z, region, index) => Change(region.HeightValues, index, change(x, z, region.HeightValues[index])));
+
+    /// <summary>
+    /// The heights of a straight slope across a circle of samples (in sample coordinates), from its
+    /// lowest sample's height to its highest's, edge to edge in the direction from the one to the
+    /// other. Heights are read through heightOf where given, so a stroke can go by what the ground was
+    /// before it, and not wear its own slope down. Null if it has no slope to follow: level, or no ground there.
+    /// </summary>
+    public System.Func<int, int, float>? SlopeAcross(Vector2 middle, float reach, System.Func<int, int, float, float>? heightOf = null)
+    {
+        if (_data is null || reach <= 0f)
+            return null;
+        var (low, high) = (float.PositiveInfinity, float.NegativeInfinity);
+        Vector2 lowAt = default, highAt = default;
+        var from = Mathf.FloorToInt(-reach) - 1;
+        var to = Mathf.CeilToInt(reach) + 1;
+        for (var dz = from; dz <= to; dz++)
+        {
+            for (var dx = from; dx <= to; dx++)
+            {
+                var at = new Vector2(Mathf.FloorToInt(middle.X) + dx, Mathf.FloorToInt(middle.Y) + dz);
+                if (at.DistanceTo(middle) > reach)
+                    continue;
+                var height = _data.HeightOf((int)at.X, (int)at.Y);
+                if (float.IsNaN(height))
+                    continue;
+                if (heightOf is not null)
+                    height = heightOf((int)at.X, (int)at.Y, height);
+                if (height < low)
+                    (low, lowAt) = (height, at);
+                if (height > high)
+                    (high, highAt) = (height, at);
+            }
+        }
+
+        if (high <= low || lowAt == highAt)
+            return null;
+        var along = (highAt - lowAt).Normalized();
+        return (x, z) => Mathf.Lerp(low, high, 0.5f + 0.5f * (new Vector2(x, z) - middle).Dot(along) / reach);
+    }
 
     /// <summary>Changes the control words of a block of samples, as <see cref="EditHeights"/> does heights.</summary>
     public void EditControl(Rect2I samples, System.Func<int, int, uint, uint> change) =>
@@ -315,7 +526,11 @@ public partial class TerrainNode : Node3D, ITerrainGround
                 if (heights)
                     _heightMaps?.UpdateLayer(region.Heights, layer);
                 else
+                {
                     _controlMaps?.UpdateLayer(region.Control, layer);
+                    if (_baked)
+                        UpdateBakedMaps(region, layer);
+                }
             }
         }
 
@@ -345,6 +560,14 @@ public partial class TerrainNode : Node3D, ITerrainGround
     [ExportToolButton("Add Region", Icon = "Add")]
     public Callable AddRegionButton => Callable.From(AddNewRegion);
 
+    // Data and a folder for its regions, if it has none.
+    private void EnsureData()
+    {
+        _data ??= new TerrainData();
+        if (string.IsNullOrEmpty(_data.Folder))
+            _data.Folder = $"res://Terrain/{Name}-Regions";
+    }
+
     // Add Region pressed: a flat region at New Region, one step to undo; data and a folder for it first, if it has none.
     private void AddNewRegion()
     {
@@ -356,10 +579,8 @@ public partial class TerrainNode : Node3D, ITerrainGround
             return;
         }
 
-        _data ??= new TerrainData();
-        if (string.IsNullOrEmpty(_data.Folder))
-            _data.Folder = $"res://Terrain/{Name}-Regions";
-        if (_data.Locations.Contains(at))
+        EnsureData();
+        if (_data!.Locations.Contains(at))
         {
             GD.PushWarning($"{Name}: it already has a region at {at}.");
             return;
@@ -377,6 +598,85 @@ public partial class TerrainNode : Node3D, ITerrainGround
         }
 #endif
         AddRegion(at);
+    }
+
+    /// <summary>What is wrong with importing a heightmap with these options, or nothing.</summary>
+    public string CheckHeightmap(string path, float width, float low, float high, bool replace, int rawWidth, int rawHeight, bool rawBigEndian)
+    {
+        if (high <= low)
+            return "Max Height must be above Min Height.";
+        try
+        {
+            var map = HeightmapFile.Read(path, rawWidth, rawHeight, rawBigEndian);
+            var data = _data ?? new TerrainData();
+            var limit = RegionMapSize * data.RegionSize * data.VertexSpacing;
+            return System.Math.Max(width, width * map.Height / map.Width) > limit ? $"Width is limited to {limit} m with these region settings." : "";
+        }
+        catch (System.IO.InvalidDataException problem)
+        {
+            return problem.Message;
+        }
+    }
+
+    /// <summary>
+    /// Makes its ground from a heightmap, centred on its origin, width metres across, black at low and white at high:
+    /// the regions it needs added, the rest removed if replacing. Heights only: existing regions keep their painting.
+    /// </summary>
+    public void ImportHeightmap(string path, float width, float low, float high, bool replace, int rawWidth, int rawHeight, bool rawBigEndian)
+    {
+        var map = HeightmapFile.Read(path, rawWidth, rawHeight, rawBigEndian);
+        EnsureData();
+        var data = _data!;
+        var across = Mathf.Max(Mathf.RoundToInt(width / data.VertexSpacing), 2);
+        var down = Mathf.Max(Mathf.RoundToInt(width * map.Height / map.Width / data.VertexSpacing), 2);
+        var (startX, startZ) = (-across / 2, -down / 2);
+        if (replace)
+        {
+            foreach (var old in data.Locations.ToList())
+                data.RemoveRegion(old);
+        }
+
+        var size = data.RegionSize;
+        for (var rz = FloorDiv(startZ, size); rz <= FloorDiv(startZ + down - 1, size); rz++)
+        {
+            for (var rx = FloorDiv(startX, size); rx <= FloorDiv(startX + across - 1, size); rx++)
+            {
+                var location = new Vector2I(rx, rz);
+                // A new region's samples past the map's edge take the edge's height, so it has no cliff there.
+                var added = data.AddRegion(location);
+                var region = data.Region(location)!;
+                var heights = region.HeightValues;
+                System.Threading.Tasks.Parallel.For(0, size, oz =>
+                {
+                    var sz = rz * size + oz - startZ;
+                    for (var ox = 0; ox < size; ox++)
+                    {
+                        var sx = rx * size + ox - startX;
+                        if (!added && (sx < 0 || sz < 0 || sx >= across || sz >= down))
+                            continue;
+                        heights[oz * size + ox] = Mathf.Lerp(low, high, map.At(sx / (float)(across - 1), sz / (float)(down - 1)));
+                    }
+                });
+                region.Commit(true, false);
+            }
+        }
+
+        Redo();
+        var spacing = data.VertexSpacing;
+        EmitSignal(SignalName.GroundChanged, new Rect2(startX * spacing, startZ * spacing, across * spacing, down * spacing));
+    }
+
+    /// <summary>Copies of all its regions, for undoing.</summary>
+    public Godot.Collections.Array<TerrainRegion> CopyRegions() =>
+        _data is null ? [] : [.. _data.Locations.Select(_data.Region).OfType<TerrainRegion>().Select(r => (TerrainRegion)r.Duplicate(true))];
+
+    /// <summary>Its regions put back to copies made by <see cref="CopyRegions"/>.</summary>
+    public void PutRegions(Godot.Collections.Array<TerrainRegion> regions)
+    {
+        if (_data is null)
+            return;
+        _data.PutRegions(regions);
+        Redo();
     }
 
     /// <summary>Adds a flat region (see <see cref="TerrainData.AddRegion"/>), and draws and collides it.</summary>
@@ -427,7 +727,15 @@ public partial class TerrainNode : Node3D, ITerrainGround
 
     public override void _Process(double delta)
     {
-        if (!_setUp || Camera() is not { } camera)
+        if (!_setUp)
+            return;
+        if (Engine.IsEditorHint() && ++_slotCheck >= 30)
+        {
+            _slotCheck = 0;
+            CheckSlots();
+        }
+
+        if (Camera() is not { } camera)
             return;
         // Only as the camera moves: standing still, nothing to move.
         var at = camera.GlobalPosition;
@@ -461,6 +769,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
     {
         if (_data is null || GetWorld3D() is not { } world)
             return;
+        EnsureShader();
         var material = Drawn.GetRid();
         if (!SetMaps(material))
             return;
@@ -533,7 +842,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
     {
         if (_data is null)
             return;
-        RenderingServer.MaterialSetParam(Drawn.GetRid(), "_camera_pos", at);
+        SetParam(Drawn.GetRid(), "_camera_pos", at);
         var inner = Vector2.Zero;
         for (var level = 0; level < _instances.Count; level++)
         {
@@ -591,6 +900,217 @@ public partial class TerrainNode : Node3D, ITerrainGround
 
     private static bool InHole(int cell, int offset) => cell >= offset - RingCells / 2 && cell < offset + RingCells / 2;
 
+    // A shader parameter; a visual shader cannot have names starting with an underscore, so its are terrain_ instead.
+    private void SetParam(Rid material, string name, Variant value)
+    {
+        RenderingServer.MaterialSetParam(material, _baked ? $"terrain{name}" : name, value);
+        // Used in both its stages, a visual shader has a parameter twice: the second named with a 2.
+        if (_baked)
+            RenderingServer.MaterialSetParam(material, $"terrain{name}2", value);
+    }
+
+    /// <summary>Whether its shader reads baked maps in place of control words: a visual shader, which cannot read their bits.</summary>
+    private bool _baked;
+
+    private Texture2DArray?[] _weightMaps = [];
+    private Texture2DArray? _flagMaps;
+    private ImageTexture? _regionLookup;
+
+    /// <summary>What a visual shader reads in place of control words and the region arrays: textures of the same things.</summary>
+    private void SetBakedMaps(Rid material, List<TerrainRegion> regions, int[] map)
+    {
+        var baked = regions.Select(r => TerrainBake.Bake(r.ControlValues, _data!.RegionSize, _slots)).ToList();
+        _weightMaps = new Texture2DArray?[TerrainBake.MapsFor(_slots)];
+        for (var i = 0; i < _weightMaps.Length; i++)
+        {
+            var slot = i;
+            _weightMaps[i] = Layers(baked.Select(b => b.Weights[slot]));
+            SetParam(material, $"_weight_maps_{i}", _weightMaps[i]!.GetRid());
+        }
+
+        _flagMaps = Layers(baked.Select(b => b.Flags));
+        SetParam(material, "_flag_maps", _flagMaps.GetRid());
+
+        var lookup = new float[RegionMapSize * RegionMapSize];
+        for (var i = 0; i < lookup.Length; i++)
+            lookup[i] = map[i];
+        var bytes = new byte[lookup.Length * sizeof(float)];
+        System.Buffer.BlockCopy(lookup, 0, bytes, 0, bytes.Length);
+        _regionLookup = ImageTexture.CreateFromImage(Image.CreateFromData(RegionMapSize, RegionMapSize, false, Image.Format.Rf, bytes));
+        SetParam(material, "_region_lookup", _regionLookup.GetRid());
+    }
+
+    private void UpdateBakedMaps(TerrainRegion region, int layer)
+    {
+        var baked = TerrainBake.Bake(region.ControlValues, _data!.RegionSize, _slots);
+        for (var i = 0; i < _weightMaps.Length; i++)
+            _weightMaps[i]?.UpdateLayer(baked.Weights[i], layer);
+        _flagMaps?.UpdateLayer(baked.Flags, layer);
+    }
+
+    /// <summary>The graph Shaders/TerrainGroundVisual.tres holds: for a terrain with no textures.</summary>
+    public VisualShader BuildDefaultShader() => TerrainGroundBuilder.Build(PlainColors.Length, [4, 5], PlainLayers);
+
+    private List<TerrainTexture?> SlotTextures() => _textures?.Textures.Select(t => (TerrainTexture?)t).ToList() ?? [];
+
+    private static Dictionary<int, int> PlainLayers => PlainRules.ToDictionary(r => r.Key, r => r.Value.Layer);
+
+    /// <summary>
+    /// How much of the ground at a place, with this control word, shows any of these textures (by
+    /// their ids), from 0 to 1. On the auto-shader it goes by the rules alone, without the noise the
+    /// shader adds to their edges.
+    /// </summary>
+    public float ShareOf(Vector3 at, uint control, IReadOnlyCollection<int> ids)
+    {
+        var blend = TerrainControl.Blend(control);
+        var manual = (ids.Contains(TerrainControl.Base(control)) ? 1f - blend : 0f) + (ids.Contains(TerrainControl.Overlay(control)) ? blend : 0f);
+        var auto = TerrainControl.AutoLevel(control) / (float)TerrainControl.FullAuto;
+        return auto <= 0f ? manual : Mathf.Lerp(manual, AutoShareOf(at, ids), auto);
+    }
+
+    // As the shader does: from the top layer down, each takes what is left, and what no rule claims is the first slot's.
+    private float AutoShareOf(Vector3 at, IReadOnlyCollection<int> ids)
+    {
+        var height = HeightAt(at);
+        var normal = NormalAt(at);
+        if (float.IsNaN(height) || !normal.IsFinite())
+            return 0f;
+        var slope = Mathf.RadToDeg(Mathf.Acos(Mathf.Min(normal.Normalized().Y, 1f)));
+        static float InRange(float value, float low, float high, float blend)
+        {
+            var fade = Mathf.Max(blend, 0.001f);
+            return Mathf.SmoothStep(low - fade, low + fade, value) * (1f - Mathf.SmoothStep(high - fade, high + fade, value));
+        }
+
+        var textures = SlotTextures();
+        var rules = textures.Count == 0 ? PlainRules
+            : Enumerable.Range(0, textures.Count).Where(i => textures[i]?.AutoShader == true).ToDictionary(i => i, i =>
+            {
+                var own = textures[i]!;
+                return new AutoRule(own.AutoLayer, own.AutoMinHeight, own.AutoMaxHeight, own.AutoHeightBlend, own.AutoMinSlope, own.AutoMaxSlope, own.AutoSlopeBlend);
+            });
+        var share = 0f;
+        var remaining = 1f;
+        foreach (var layer in rules.GroupBy(r => r.Value.Layer).OrderByDescending(g => g.Key))
+        {
+            var claims = layer.Select(r => (Slot: r.Key, Claim: InRange(height, r.Value.MinHeight, r.Value.MaxHeight, r.Value.HeightBlend) * InRange(slope, r.Value.MinSlope, r.Value.MaxSlope, r.Value.SlopeBlend))).ToList();
+            var total = claims.Sum(c => c.Claim);
+            var over = Mathf.Max(total, 1f);
+            share += remaining * claims.Where(c => ids.Contains(c.Slot)).Sum(c => c.Claim) / over;
+            remaining *= Mathf.Max(1f - total, 0f);
+        }
+
+        return share + (ids.Contains(0) ? remaining : 0f);
+    }
+
+    private (int Slots, List<int> Paving, Dictionary<int, int> AutoLayers) WantedSlots()
+    {
+        var textures = SlotTextures();
+        if (textures.Count == 0)
+            return (PlainColors.Length, [4, 5], PlainLayers);
+        var slots = Mathf.Clamp(textures.Count, TerrainGroundBuilder.MinSlots, TerrainGroundBuilder.MaxSlots);
+        var used = Enumerable.Range(0, Mathf.Min(slots, textures.Count)).ToList();
+        return (slots, used.Where(i => textures[i]?.IsPaving == true).ToList(), used.Where(i => textures[i]?.AutoShader == true).ToDictionary(i => i, i => textures[i]!.AutoLayer));
+    }
+
+    /// <summary>Gives a generated shader the slots its textures want, built again (and saved beside its data) if they changed. A shader of your own is left alone.</summary>
+    private void EnsureShader()
+    {
+        var material = Drawn;
+        if (!Generated)
+            return;
+        var (slots, paving, autoLayers) = WantedSlots();
+        _slots = slots;
+        var signature = TerrainGroundBuilder.Signature(slots, paving, autoLayers);
+        if (BuiltSignature == signature)
+            return;
+
+        var path = _data is { ResourcePath: var dataPath } && dataPath.StartsWith("res://") && !dataPath.Contains("::")
+            ? dataPath.GetBaseName() + "Ground.tres"
+            : null;
+        if (path is not null && ResourceLoader.Exists(path) && ResourceLoader.Load<VisualShader>(path) is { } saved
+            && saved.HasMeta(TerrainGroundBuilder.SignatureMeta) && saved.GetMeta(TerrainGroundBuilder.SignatureMeta).AsString() == signature)
+        {
+            material.Shader = saved;
+            return;
+        }
+
+        var built = TerrainGroundBuilder.Build(slots, paving, autoLayers);
+        if (path is not null && Engine.IsEditorHint() && ResourceSaver.Save(built, path) == Error.Ok)
+            built.TakeOverPath(path);
+        material.Shader = built;
+    }
+
+    /// <summary>Follows changes to the textures in the editor, which tell it nothing: a new graph if the slots changed, or else just their settings.</summary>
+    private void CheckSlots()
+    {
+        if (!Generated)
+            return;
+        var (slots, paving, autoLayers) = WantedSlots();
+        if (BuiltSignature != TerrainGroundBuilder.Signature(slots, paving, autoLayers))
+        {
+            Redo();
+            return;
+        }
+
+        if (SlotValues() != _slotValues)
+            SetSlots(Drawn.GetRid());
+    }
+
+    private string SlotValues() => string.Join(";", SlotTextures().Select(t => t is null ? "" : $"{t.UvScale},{t.NormalDepth},{t.RoughnessMod},{t.Tint},{t.FlatColor},{t.FlatRoughness},{t.AutoMinHeight},{t.AutoMaxHeight},{t.AutoHeightBlend},{t.AutoMinSlope},{t.AutoMaxSlope},{t.AutoSlopeBlend}"));
+
+    /// <summary>Each slot's settings, from its texture; and the shader's own, from this node.</summary>
+    private void SetSlots(Rid material)
+    {
+        var textures = SlotTextures();
+        var hasImages = textures.Any(t => t?.Albedo is not null);
+        SetParam(material, "_flat_amount", hasImages ? 0f : 1f);
+        for (var i = 0; i < _slots; i++)
+        {
+            var texture = i < textures.Count ? textures[i] : null;
+            var plain = i < PlainColors.Length ? PlainColors[i] : new Color(0.5f, 0.5f, 0.5f);
+            SetParam(material, $"_slot_{i}_uv_scale", texture?.UvScale ?? 0f);
+            SetParam(material, $"_slot_{i}_normal_depth", texture?.NormalDepth ?? 0f);
+            SetParam(material, $"_slot_{i}_roughness_mod", texture?.RoughnessMod ?? 0f);
+            SetParam(material, $"_slot_{i}_tint", texture?.Tint ?? Colors.White);
+            SetParam(material, $"_slot_{i}_flat_colour", texture?.FlatColor ?? plain);
+            SetParam(material, $"_slot_{i}_flat_roughness", texture?.FlatRoughness ?? 0.9f);
+            var rule = texture is { } own
+                ? new AutoRule(own.AutoLayer, own.AutoMinHeight, own.AutoMaxHeight, own.AutoHeightBlend, own.AutoMinSlope, own.AutoMaxSlope, own.AutoSlopeBlend)
+                : PlainRules.GetValueOrDefault(i);
+            SetParam(material, $"_slot_{i}_auto_min_height", rule.MinHeight);
+            SetParam(material, $"_slot_{i}_auto_max_height", rule.MaxHeight);
+            SetParam(material, $"_slot_{i}_auto_height_blend", rule.HeightBlend);
+            SetParam(material, $"_slot_{i}_auto_min_slope", rule.MinSlope);
+            SetParam(material, $"_slot_{i}_auto_max_slope", rule.MaxSlope);
+            SetParam(material, $"_slot_{i}_auto_slope_blend", rule.SlopeBlend);
+        }
+
+        _slotValues = SlotValues();
+        if (Generated)
+            SetSettings(material);
+    }
+
+    private void SetSettings(Rid material)
+    {
+        RenderingServer.MaterialSetParam(material, "use_flat_colours", _useFlatColours);
+        RenderingServer.MaterialSetParam(material, "edge_height_noise", _edgeHeightNoise);
+        RenderingServer.MaterialSetParam(material, "edge_slope_noise", _edgeSlopeNoise);
+        RenderingServer.MaterialSetParam(material, "edge_noise_size", _edgeNoiseSize);
+        RenderingServer.MaterialSetParam(material, "blend_sharpness", _blendSharpness);
+        RenderingServer.MaterialSetParam(material, "paving_edge_hardness", _pavingEdgeHardness);
+        RenderingServer.MaterialSetParam(material, "far_uv_scale", _farUvScale);
+        RenderingServer.MaterialSetParam(material, "far_blend_start", _farBlendStart);
+        RenderingServer.MaterialSetParam(material, "far_blend_end", _farBlendEnd);
+        RenderingServer.MaterialSetParam(material, "far_blend_amount", _farBlendAmount);
+        RenderingServer.MaterialSetParam(material, "far_rotation", _farRotation);
+        RenderingServer.MaterialSetParam(material, "farthest_uv_scale", _farthestUvScale);
+        RenderingServer.MaterialSetParam(material, "farthest_blend_start", _farthestBlendStart);
+        RenderingServer.MaterialSetParam(material, "farthest_blend_end", _farthestBlendEnd);
+        RenderingServer.MaterialSetParam(material, "farthest_blend_amount", _farthestBlendAmount);
+        RenderingServer.MaterialSetParam(material, "farthest_rotation", _farthestRotation);
+    }
+
     /// <summary>Puts the regions' heights, control and colours on the GPU, and tells the shader where each region is.</summary>
     private bool SetMaps(Rid material)
     {
@@ -610,19 +1130,22 @@ public partial class TerrainNode : Node3D, ITerrainGround
             _layers[regions[layer].Location] = layer;
         }
 
+        _baked = RenderingServer.GetShaderParameterList(Drawn.Shader.GetRid()).Any(p => p["name"].AsString() == "terrain_weight_maps_0");
+        if (_baked)
+            SetBakedMaps(material, regions, map);
         _heightMaps = Layers(regions.Select(r => r.Heights!));
         _controlMaps = Layers(regions.Select(r => r.Control!));
-        RenderingServer.MaterialSetParam(material, "_height_maps", _heightMaps.GetRid());
-        RenderingServer.MaterialSetParam(material, "_control_maps", _controlMaps.GetRid());
-        RenderingServer.MaterialSetParam(material, "_color_maps", Array(regions.Select(r => r.Colors!)));
-        RenderingServer.MaterialSetParam(material, "_region_map", map);
-        RenderingServer.MaterialSetParam(material, "_region_locations", locations);
-        RenderingServer.MaterialSetParam(material, "_region_map_size", RegionMapSize);
-        RenderingServer.MaterialSetParam(material, "_region_size", (float)_data.RegionSize);
-        RenderingServer.MaterialSetParam(material, "_region_texel_size", 1f / _data.RegionSize);
-        RenderingServer.MaterialSetParam(material, "_vertex_spacing", _data.VertexSpacing);
-        RenderingServer.MaterialSetParam(material, "_vertex_density", 1f / _data.VertexSpacing);
-        RenderingServer.MaterialSetParam(material, "_ring_cells", (float)RingCells);
+        SetParam(material, "_height_maps", _heightMaps.GetRid());
+        SetParam(material, "_control_maps", _controlMaps.GetRid());
+        SetParam(material, "_color_maps", Array(regions.Select(r => r.Colors!)));
+        SetParam(material, "_region_map", map);
+        SetParam(material, "_region_locations", locations);
+        SetParam(material, "_region_map_size", RegionMapSize);
+        SetParam(material, "_region_size", (float)_data.RegionSize);
+        SetParam(material, "_region_texel_size", 1f / _data.RegionSize);
+        SetParam(material, "_vertex_spacing", _data.VertexSpacing);
+        SetParam(material, "_vertex_density", 1f / _data.VertexSpacing);
+        SetParam(material, "_ring_cells", (float)RingCells);
         return true;
     }
 
@@ -632,18 +1155,27 @@ public partial class TerrainNode : Node3D, ITerrainGround
         var textures = _textures?.Textures.Where(t => t is not null).ToList() ?? new List<TerrainTexture>();
         var albedos = Same(textures.Select(t => t.Albedo?.GetImage()).ToList());
         var normals = Same(textures.Select(t => t.Normal?.GetImage()).ToList());
+        // With no textures to draw, its flat colours; with some, as its material says.
+        if (!_baked)
+            SetParam(material, "use_flat_colours", albedos.Count == 0 || Drawn.GetShaderParameter("use_flat_colours").AsBool());
         if (albedos.Count > 0)
-            RenderingServer.MaterialSetParam(material, "_texture_array_albedo", Array(albedos));
+            SetParam(material, "_texture_array_albedo", Array(albedos));
         if (normals.Count > 0)
-            RenderingServer.MaterialSetParam(material, "_texture_array_normal", Array(normals));
+            SetParam(material, "_texture_array_normal", Array(normals));
 
         float[] Each(System.Func<TerrainTexture, float> of) =>
             Enumerable.Range(0, 32).Select(i => i < textures.Count ? of(textures[i]) : 0f).ToArray();
-        RenderingServer.MaterialSetParam(material, "_texture_uv_scale_array", Each(t => t.UvScale));
-        RenderingServer.MaterialSetParam(material, "_texture_normal_depth_array", Each(t => t.NormalDepth));
-        RenderingServer.MaterialSetParam(material, "_texture_ao_strength_array", Each(t => t.AoStrength));
-        RenderingServer.MaterialSetParam(material, "_texture_roughness_mod_array", Each(t => t.RoughnessMod));
-        RenderingServer.MaterialSetParam(material, "_texture_color_array",
+        if (_baked)
+        {
+            SetParam(material, "_flat_amount", albedos.Count == 0 ? 1f : 0f);
+            SetSlots(material);
+        }
+
+        SetParam(material, "_texture_uv_scale_array", Each(t => t.UvScale));
+        SetParam(material, "_texture_normal_depth_array", Each(t => t.NormalDepth));
+        SetParam(material, "_texture_ao_strength_array", Each(t => t.AoStrength));
+        SetParam(material, "_texture_roughness_mod_array", Each(t => t.RoughnessMod));
+        SetParam(material, "_texture_color_array",
             Enumerable.Range(0, 32).Select(i => i < textures.Count ? textures[i].Tint : Colors.White).ToArray());
     }
 

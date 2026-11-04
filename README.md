@@ -82,14 +82,13 @@ Each `TerrainTexture` needs an **Albedo** (height in alpha) and a **Normal** (ro
 
 ### Shader
 
-The plugin comes with two shaders. With **Material** empty, the terrain always uses the first:
+With **Material** empty, the terrain uses the plugin's shader:
 
-- The default: a visual shader made entirely of nodes, generated for your Textures (4 to 32 slots) and saved next to the terrain's data as `<Data name>Ground.tres`. It's rebuilt when the number of Textures or their **Is Paving** boxes change, so **hand edits to a generated graph are lost**; to keep edits, save a copy under another name and assign it in a material (a copy keeps the generated marker, so remove the `terrain_ground_signature` metadata). Its settings are grouped on the `TerrainNode`: **Flat Colours**, **Auto Shader**, **Blending**, **Paving** and **Distance Tiling**. Each texture has its own **Flat Color**, **Flat Roughness**, **Is Paving** and **Auto Shader** rules: a height and slope range and a layer. Higher layers cover lower ones, textures on one layer share the ground they both claim, and ground no rule claims shows the first texture. **Paving Edge Hardness** sets how sharply paving meets the ground: 1 is a clean line, 0 a wide blend. With no Textures, it uses six plain colours, with slots 4 and 5 as paving.
-- `Shaders/TerrainGround.gdshader`: a code shader with up to 32 Textures, macro variation, and flat colours with patches and ragged edges. To use it, assign a `ShaderMaterial` with this shader.
+- A visual shader made entirely of nodes, generated for your Textures (4 to 32 slots) and saved next to the terrain's data as `<Data name>Ground.tres`. It's rebuilt when the number of Textures or their **Is Paving** boxes change, so **hand edits to a generated graph are lost**; to keep edits, save a copy under another name and assign it in a material (a copy keeps the generated marker, so remove the `terrain_ground_signature` metadata). Its settings are grouped on the `TerrainNode`: **Flat Colours**, **Auto Shader**, **Blending**, **Paving** and **Distance Tiling**. Each texture has its own **Flat Color**, **Flat Roughness**, **Is Paving** and **Auto Shader** rules: a height and slope range and a layer. Higher layers cover lower ones, textures on one layer share the ground they both claim, and ground no rule claims shows the first texture. **Paving Edge Hardness** sets how sharply paving meets the ground: 1 is a clean line, 0 a wide blend. With no Textures, it uses six plain colours, with slots 4 and 5 as paving.
 
-To change settings, or to edit the graph without changing the plugin's copy, assign a `ShaderMaterial` using a copy of either shader.
+To change settings, or to edit the graph without changing the plugin's copy, assign a `ShaderMaterial` using a copy of that shader.
 
-To replace it, assign a `ShaderMaterial` with your own shader. It must take the private uniforms `TerrainNode` sets (the ones starting with `_`), as the included shaders do.
+To replace it, assign a `ShaderMaterial` with your own shader. It must take the private uniforms `TerrainNode` sets (the ones starting with `_`), as the included shader do.
 
 ## Code
 
@@ -111,6 +110,17 @@ internal static class TerrainHook
         TerrainBrush.StrokeCompleted += static (_, e) => GD.Print(e.Terrain.Name, " changed ", e.Samples);
 }
 ```
+
+## Masks
+
+A mask hides the ground in an area without changing its data, following any outline rather than the 2 m grid that holes follow. Each shape has a height: ground below it is neither drawn nor solid, ground above it stays, and collision matches the outline.
+
+```csharp
+terrain.SetMask("tunnel:1", shapes, tops);   // convex shapes as Vector2[][] in world X and Z, and a height for each
+terrain.RemoveMask("tunnel:1");
+```
+
+Masks aren't saved, so set them each time your code loads. A shader of your own needs to read `terrain_mask` to hide them, as the included one does.
 
 ## License
 

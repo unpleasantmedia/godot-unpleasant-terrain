@@ -22,7 +22,7 @@ public sealed class TerrainGroundBuilder
 
     /// <summary>What a graph is built from, to tell whether one is still right.</summary>
     public static string Signature(int slots, IEnumerable<int> paving, IReadOnlyDictionary<int, int> autoLayers) =>
-        $"{slots}:{string.Join(",", paving)}:{string.Join(",", autoLayers.OrderBy(a => a.Key).Select(a => $"{a.Key}@{a.Value}"))}";
+        $"masked-top:{slots}:{string.Join(",", paving)}:{string.Join(",", autoLayers.OrderBy(a => a.Key).Select(a => $"{a.Key}@{a.Value}"))}";
 
     public static VisualShader Build(int slots, IReadOnlyCollection<int> paving, IReadOnlyDictionary<int, int> autoLayers)
     {
@@ -502,8 +502,32 @@ public sealed class TerrainGroundBuilder
         var packed = VPlus(VScale(Compose3(new Out(finalNormal, 0), new Out(finalNormal, 2), new Out(finalNormal, 1)), halfUv), C3(new Vector3(0.5f, 0.5f, 0.5f)));
         _shader.SetNodePosition(_stage, 0, new Vector2(_column + 900f, 0f));
         Wire(finalAlbedo, 0, 0);
-        Wire(final.Rough, 0, 3);
-        Wire(Minus(_one, final.Rough), 0, 4);
+        // Masked (see TerrainMasks): nothing drawn there, by whichever pixel it is.
+        var maskSampler = Add(new VisualShaderNodeTexture2DParameter
+        {
+            ParameterName = "terrain_mask",
+            TextureType = VisualShaderNodeTextureParameter.TextureTypeEnum.Data,
+            ColorDefault = VisualShaderNodeTextureParameter.ColorDefaultEnum.Black,
+            TextureFilter = VisualShaderNodeTextureParameter.TextureFilterEnum.Linear,
+            TextureRepeat = VisualShaderNodeTextureParameter.TextureRepeatEnum.Disabled,
+        });
+        var maskLookup = Add(new VisualShaderNodeTexture { Source = VisualShaderNodeTexture.SourceEnum.Port });
+        Wire(Uv2(Over(Minus(wx, Param("terrain_mask_x", 0f)), Param("terrain_mask_width", 1f)), Over(Minus(wz, Param("terrain_mask_z", 0f)), Param("terrain_mask_depth", 1f))), maskLookup, 0);
+        Wire(maskSampler, maskLookup, 2);
+        var masked = new VisualShaderNodeExpression { Expression = "if (mask > 0.5 && height < top) {\n\tdiscard;\n}\nkept = roughness;" };
+        masked.AddInputPort(0, (int)VisualShaderNode.PortType.Scalar, "roughness");
+        masked.AddInputPort(1, (int)VisualShaderNode.PortType.Scalar, "mask");
+        masked.AddInputPort(2, (int)VisualShaderNode.PortType.Scalar, "top");
+        masked.AddInputPort(3, (int)VisualShaderNode.PortType.Scalar, "height");
+        masked.AddOutputPort(0, (int)VisualShaderNode.PortType.Scalar, "kept");
+        var maskedNode = Add(masked);
+        Wire(final.Rough, maskedNode, 0);
+        var maskParts = Decompose4(maskLookup);
+        Wire(new Out(maskParts, 0), maskedNode, 1);
+        Wire(new Out(maskParts, 1), maskedNode, 2);
+        Wire(wy, maskedNode, 3);
+        Wire(new Out(maskedNode, 0), 0, 3);
+        Wire(Minus(_one, new Out(maskedNode, 0)), 0, 4);
         Wire(packed, 0, 9);
         Wire(final.Depth, 0, 10);
     }

@@ -38,6 +38,12 @@ public interface ITerrainGround
     /// <summary>Opens or closes holes at samples, and redraws the ground.</summary>
     void SetHoles(IEnumerable<(int X, int Z, bool Hole)> holes);
 
+    /// <summary>Sets a mask by its name: convex shapes in world X and Z where the ground below its height in tops is neither drawn nor solid. None takes it away. Not saved.</summary>
+    void SetMask(string name, Vector2[][] shapes, float[] tops);
+
+    /// <summary>Takes a mask away.</summary>
+    void RemoveMask(string name);
+
     /// <summary>Writes its changes to its files.</summary>
     void Save();
 }

@@ -823,6 +823,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
             PhysicsServer3D.FreeRid(_body);
         foreach (var shape in _shapes.Values)
             PhysicsServer3D.FreeRid(shape);
+        FreeMaskPatches();
         _body = default;
         _shapes.Clear();
         _layers.Clear();
@@ -1164,6 +1165,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
         _slotValues = SlotValues();
         if (Generated)
             SetSettings(material);
+        GiveMaskToShader();
     }
 
     private void SetSettings(Rid material)
@@ -1336,6 +1338,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
             PhysicsServer3D.BodyAddShape(_body, shape, new Transform3D(turn, new Vector3(middle.X, 0f, middle.Y)));
         }
 
+        MaskCollision(tile, heights, across);
         PhysicsServer3D.ShapeSetData(shape, new Godot.Collections.Dictionary
         {
             ["width"] = across,

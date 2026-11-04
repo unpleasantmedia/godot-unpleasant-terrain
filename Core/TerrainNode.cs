@@ -1005,6 +1005,79 @@ public partial class TerrainNode : Node3D, ITerrainGround
         return share + (ids.Contains(0) ? remaining : 0f);
     }
 
+    /// <summary>
+    /// How much of the ground at a place, with this control word, shows each texture (by its id), from
+    /// 0 to 1, as <see cref="ShareOf"/> gives one at a time: for asking about all of them at once.
+    /// </summary>
+    public float[] SharesAt(Vector3 at, uint control)
+    {
+        var textures = SlotTextures();
+        var shares = new float[Mathf.Max(textures.Count, PlainColors.Length)];
+        var blend = TerrainControl.Blend(control);
+        var auto = TerrainControl.AutoLevel(control) / (float)TerrainControl.FullAuto;
+        void Add(int id, float amount)
+        {
+            if (id < shares.Length)
+                shares[id] += amount;
+        }
+
+        Add(TerrainControl.Base(control), (1f - blend) * (1f - auto));
+        Add(TerrainControl.Overlay(control), blend * (1f - auto));
+        if (auto <= 0f)
+            return shares;
+
+        var height = HeightAt(at);
+        var normal = NormalAt(at);
+        if (float.IsNaN(height) || !normal.IsFinite())
+            return shares;
+        var slope = Mathf.RadToDeg(Mathf.Acos(Mathf.Min(normal.Normalized().Y, 1f)));
+        static float InRange(float value, float low, float high, float fade)
+        {
+            fade = Mathf.Max(fade, 0.001f);
+            return Mathf.SmoothStep(low - fade, low + fade, value) * (1f - Mathf.SmoothStep(high - fade, high + fade, value));
+        }
+
+        var rules = new List<(int Slot, AutoRule Rule)>();
+        for (var i = 0; i < textures.Count; i++)
+        {
+            if (textures[i] is { AutoShader: true } own)
+                rules.Add((i, new AutoRule(own.AutoLayer, own.AutoMinHeight, own.AutoMaxHeight, own.AutoHeightBlend, own.AutoMinSlope, own.AutoMaxSlope, own.AutoSlopeBlend)));
+        }
+
+        if (textures.Count == 0)
+        {
+            foreach (var (slot, rule) in PlainRules)
+                rules.Add((slot, rule));
+        }
+
+        // As the shader does: from the top layer down, each takes what is left, and what no rule claims is the first slot's.
+        rules.Sort((a, b) => b.Rule.Layer.CompareTo(a.Rule.Layer));
+        var remaining = 1f;
+        for (var from = 0; from < rules.Count;)
+        {
+            var to = from;
+            var total = 0f;
+            for (; to < rules.Count && rules[to].Rule.Layer == rules[from].Rule.Layer; to++)
+            {
+                var r = rules[to].Rule;
+                total += InRange(height, r.MinHeight, r.MaxHeight, r.HeightBlend) * InRange(slope, r.MinSlope, r.MaxSlope, r.SlopeBlend);
+            }
+
+            var over = Mathf.Max(total, 1f);
+            for (var i = from; i < to; i++)
+            {
+                var r = rules[i].Rule;
+                Add(rules[i].Slot, auto * remaining * InRange(height, r.MinHeight, r.MaxHeight, r.HeightBlend) * InRange(slope, r.MinSlope, r.MaxSlope, r.SlopeBlend) / over);
+            }
+
+            remaining *= Mathf.Max(1f - total, 0f);
+            from = to;
+        }
+
+        Add(0, auto * remaining);
+        return shares;
+    }
+
     private (int Slots, List<int> Paving, Dictionary<int, int> AutoLayers) WantedSlots()
     {
         var textures = SlotTextures();

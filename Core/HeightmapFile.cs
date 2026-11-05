@@ -21,18 +21,24 @@ public sealed class HeightmapFile
 
     public float[] Values { get; private init; } = [];
 
+    /// <summary>Whether its values are a floating-point file's own, not yet scaled (see keepFloats in <see cref="Read"/>).</summary>
+    public bool Floating { get; private init; }
+
     /// <summary>Whether a file of this name is RAW, which needs its size and byte order given.</summary>
     public static bool IsRaw(string path) => path.GetExtension().ToLowerInvariant() is "raw" or "r16";
 
-    /// <summary>Reads a file. Throws an <see cref="InvalidDataException"/>, with a message to show, if it cannot.</summary>
-    public static HeightmapFile Read(string path, int rawWidth = 0, int rawHeight = 0, bool rawBigEndian = false)
+    /// <summary>
+    /// Reads a file. Throws an <see cref="InvalidDataException"/>, with a message to show, if it cannot.
+    /// With keepFloats, floating-point values are left as they are, for tiles to share one range.
+    /// </summary>
+    public static HeightmapFile Read(string path, int rawWidth = 0, int rawHeight = 0, bool rawBigEndian = false, bool keepFloats = false)
     {
         var extension = path.GetExtension().ToLowerInvariant();
         return extension switch
         {
-            "png" => ReadPng(path),
-            "exr" => ReadWithGodot(path),
-            "tif" or "tiff" => ReadTiff(Bytes(path)),
+            "png" => ReadPng(path, keepFloats),
+            "exr" => ReadWithGodot(path, keepFloats),
+            "tif" or "tiff" => ReadTiff(Bytes(path), keepFloats),
             "raw" or "r16" => ReadRaw(Bytes(path), rawWidth, rawHeight, rawBigEndian),
             _ => throw new InvalidDataException($"Unsupported heightmap type: .{extension}"),
         };
@@ -57,7 +63,7 @@ public sealed class HeightmapFile
         return bytes.Length > 0 ? bytes : throw new InvalidDataException($"Could not read {path}");
     }
 
-    private static HeightmapFile ReadWithGodot(string path)
+    private static HeightmapFile ReadWithGodot(string path, bool keepFloats)
     {
         var image = Image.LoadFromFile(path) ?? throw new InvalidDataException($"Could not read {path}");
         if (image.IsEmpty())
@@ -70,7 +76,7 @@ public sealed class HeightmapFile
         var data = image.GetData();
         var values = new float[data.Length / sizeof(float)];
         Buffer.BlockCopy(data, 0, values, 0, data.Length);
-        return new HeightmapFile { Width = image.GetWidth(), Height = image.GetHeight(), Values = floating ? ToOwnRange(values) : values };
+        return new HeightmapFile { Width = image.GetWidth(), Height = image.GetHeight(), Values = floating && !keepFloats ? ToOwnRange(values) : values, Floating = floating && keepFloats };
     }
 
     private static float[] ToOwnRange(float[] values)
@@ -104,11 +110,11 @@ public sealed class HeightmapFile
 
     // ---- PNG ----
 
-    private static HeightmapFile ReadPng(string path)
+    private static HeightmapFile ReadPng(string path, bool keepFloats)
     {
         var bytes = Bytes(path);
         if (bytes.Length < 33 || bytes[24] != 16)
-            return ReadWithGodot(path);
+            return ReadWithGodot(path, keepFloats);
         var (width, height) = (BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(16)), BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(20)));
         var channels = bytes[25] switch
         {
@@ -175,7 +181,7 @@ public sealed class HeightmapFile
 
     // ---- TIFF ----
 
-    private static HeightmapFile ReadTiff(byte[] b)
+    private static HeightmapFile ReadTiff(byte[] b, bool keepFloats)
     {
         if (b.Length < 8 || !((b[0] == 'I' && b[1] == 'I') || (b[0] == 'M' && b[1] == 'M')))
             throw new InvalidDataException("Not a TIFF file.");
@@ -267,7 +273,8 @@ public sealed class HeightmapFile
             }
         }
 
-        return new HeightmapFile { Width = width, Height = height, Values = bits == 32 && format == 3 ? ToOwnRange(values) : values };
+        var floating = bits == 32 && format == 3;
+        return new HeightmapFile { Width = width, Height = height, Values = floating && !keepFloats ? ToOwnRange(values) : values, Floating = floating && keepFloats };
     }
 
     private static int U32Of(byte[] bytes, int at, bool big) =>

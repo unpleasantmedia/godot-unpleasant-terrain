@@ -4,16 +4,31 @@
 
 [node name="HeightmapImportDialog" type="ConfirmationDialog"]
 title = "Import Heightmap"
-size = Vector2i(560, 360)
+size = Vector2i(680, 660)
 ok_button_text = "Import"
 script = ExtResource("1")
 
 [node name="Options" type="GridContainer" parent="."]
 offset_left = 8.0
 offset_top = 8.0
-offset_right = 552.0
-offset_bottom = 311.0
+offset_right = 672.0
+offset_bottom = 611.0
 columns = 2
+
+[node name="SourceLabel" type="Label" parent="Options"]
+layout_mode = 2
+text = "Source"
+
+[node name="Source" type="OptionButton" parent="Options"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "One file, or a large map split across several files."
+selected = 0
+item_count = 2
+popup/item_0/text = "Single File"
+popup/item_0/id = 0
+popup/item_1/text = "Tiled Files"
+popup/item_1/id = 1
 
 [node name="FileLabel" type="Label" parent="Options"]
 layout_mode = 2
@@ -33,6 +48,73 @@ placeholder_text = "PNG, EXR, TIFF or RAW file"
 unique_name_in_owner = true
 layout_mode = 2
 text = "Browse"
+
+[node name="TilesLabel" type="Label" parent="Options"]
+visible = false
+layout_mode = 2
+size_flags_vertical = 0
+text = "Tiles"
+
+[node name="Tiles" type="VBoxContainer" parent="Options"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Buttons" type="HBoxContainer" parent="Options/Tiles"]
+layout_mode = 2
+
+[node name="AddTiles" type="Button" parent="Options/Tiles/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Choose several files. Each goes where its name says, as Map_x0_y1, Map_y1_x0, Map_r1_c0 or Map_0_1; others fill the empty places."
+text = "Add Files"
+
+[node name="ClearTiles" type="Button" parent="Options/Tiles/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Clear"
+
+[node name="CheckSeams" type="Button" parent="Options/Tiles/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Reads all the tiles and reports how their heights meet, which tells shared edges from separate ones and shows up a tile in the wrong place."
+text = "Check Seams"
+
+[node name="ColumnsLabel" type="Label" parent="Options/Tiles/Buttons"]
+layout_mode = 2
+text = "Columns"
+
+[node name="Columns" type="SpinBox" parent="Options/Tiles/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 1.0
+max_value = 64.0
+value = 2.0
+
+[node name="RowsLabel" type="Label" parent="Options/Tiles/Buttons"]
+layout_mode = 2
+text = "Rows"
+
+[node name="TileRows" type="SpinBox" parent="Options/Tiles/Buttons"]
+unique_name_in_owner = true
+layout_mode = 2
+min_value = 1.0
+max_value = 64.0
+value = 2.0
+
+[node name="Hint" type="Label" parent="Options/Tiles"]
+layout_mode = 2
+theme_type_variation = &"HeaderSmall"
+text = "Drag to swap, click to choose a file, right-click to empty."
+
+[node name="Scroll" type="ScrollContainer" parent="Options/Tiles"]
+custom_minimum_size = Vector2(0, 240)
+layout_mode = 2
+
+[node name="TileGrid" type="GridContainer" parent="Options/Tiles/Scroll"]
+unique_name_in_owner = true
+layout_mode = 2
+columns = 2
 
 [node name="InfoLabel" type="Control" parent="Options"]
 layout_mode = 2
@@ -55,6 +137,38 @@ min_value = 1.0
 max_value = 100000.0
 value = 1024.0
 suffix = "m"
+
+[node name="TileWidthLabel" type="Label" parent="Options"]
+visible = false
+layout_mode = 2
+text = "Tile Width"
+
+[node name="TileWidth" type="SpinBox" parent="Options"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+tooltip_text = "How wide one tile is. Set to one sample a pixel when tiles are added. The whole map is centred on the terrain's origin."
+min_value = 1.0
+max_value = 100000.0
+value = 1024.0
+suffix = "m"
+
+[node name="EdgesLabel" type="Label" parent="Options"]
+visible = false
+layout_mode = 2
+text = "Tile Edges"
+
+[node name="Edges" type="OptionButton" parent="Options"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+tooltip_text = "Shared: a tile's last pixels repeat as the next tile's first, usual for sizes like 1025. Separate: no pixels repeat, usual for sizes like 1024. Check Seams tells which yours are."
+selected = 0
+item_count = 2
+popup/item_0/text = "Shared Edges"
+popup/item_0/id = 0
+popup/item_1/text = "Separate Edges"
+popup/item_1/id = 1
 
 [node name="MinHeightLabel" type="Label" parent="Options"]
 layout_mode = 2
@@ -135,6 +249,20 @@ popup/item_0/text = "Little-endian (usual)"
 popup/item_0/id = 0
 popup/item_1/text = "Big-endian"
 popup/item_1/id = 1
+
+[node name="TilesPicker" type="FileDialog" parent="."]
+unique_name_in_owner = true
+title = "Open Heightmap Tiles"
+file_mode = 1
+access = 2
+filters = PackedStringArray("*.png,*.exr,*.tif,*.tiff,*.raw,*.r16;Heightmaps")
+
+[node name="TilePicker" type="FileDialog" parent="."]
+unique_name_in_owner = true
+title = "Open a Heightmap Tile"
+file_mode = 0
+access = 2
+filters = PackedStringArray("*.png,*.exr,*.tif,*.tiff,*.raw,*.r16;Heightmaps")
 
 [node name="Picker" type="FileDialog" parent="."]
 unique_name_in_owner = true

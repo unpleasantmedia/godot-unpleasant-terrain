@@ -5,7 +5,7 @@ A terrain plugin for Godot 4.7 (.NET version). `TerrainNode` draws its ground as
 ## Features
 
 - Sculpting brushes: Raise, Lower, Smooth, Flatten, Slope and Set Height
-- Importing a heightmap (PNG, EXR, TIFF or 16-bit RAW) to generate the ground
+- Importing a heightmap (PNG, EXR, TIFF or 16-bit RAW) to generate the ground, from one file or a grid of tiled files
 - Painting with up to 32 textures, or an auto-shader that picks textures by height and slope
 - Holes in the ground
 - Two ground shaders included, one a visual shader you can edit as a graph; replace them with your own if you like

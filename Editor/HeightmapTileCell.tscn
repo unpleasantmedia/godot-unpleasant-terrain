@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://addons/unpleasant_terrain/Editor/HeightmapTileCell.cs" id="1"]
+
+[node name="HeightmapTileCell" type="Button"]
+custom_minimum_size = Vector2(160, 44)
+clip_text = true
+script = ExtResource("1")

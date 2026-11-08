@@ -57,7 +57,28 @@ public static class TerrainGround
     /// The first terrain under a node (a level): from those in the tree, not by going through the
     /// whole level, which a level of tens of thousands of nodes makes slow (and every fence and path asks).
     /// </summary>
-    public static Node3D? FindIn(Node? root) =>
-        root is null ? null : TerrainNode.InTree.Where(t => GodotObject.IsInstanceValid(t) && (t == root || root.IsAncestorOf(t)))
+    public static Node3D? FindIn(Node? root)
+    {
+        if (root is null)
+            return null;
+        var found = InTreeUnder(root);
+        if (found is not null)
+            return found;
+        // None known: rebuilding the scripts empties the list, and a terrain only puts itself back on
+        // its next frame; anything asking before then (roads rebuilt as the scripts reload, building
+        // viaducts with no ground to stand pillars on) would find none. Looked for the slow way, then.
+        foreach (var terrain in root.FindChildren("*", nameof(Node3D), true, false).OfType<TerrainNode>())
+        {
+            if (terrain.IsInsideTree())
+                TerrainNode.InTree.Add(terrain);
+        }
+
+        if (root is TerrainNode self && self.IsInsideTree())
+            TerrainNode.InTree.Add(self);
+        return InTreeUnder(root);
+    }
+
+    private static Node3D? InTreeUnder(Node root) =>
+        TerrainNode.InTree.Where(t => GodotObject.IsInstanceValid(t) && (t == root || root.IsAncestorOf(t)))
             .OrderBy(t => t.GetPath().ToString(), System.StringComparer.Ordinal).FirstOrDefault();
 }

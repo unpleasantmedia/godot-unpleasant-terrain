@@ -117,7 +117,9 @@ public partial class TerrainNode : Node3D, ITerrainGround
     private Godot.Collections.Dictionary<Vector2I, Rid> _shapes = new();
     private Texture2DArray? _heightMaps;
     private Texture2DArray? _controlMaps;
-    private Rid _body;
+    /// <summary>Its collision: a static body for each region, holding that region's tiles, so adding or changing a tile rebuilds only its region's body, not one body of thousands of shapes.</summary>
+    private readonly Dictionary<Vector2I, Rid> _bodies = new();
+    private bool _collides;
     private bool _setUp;
     private bool _editorCollision;
     private uint _collisionLayer = 1;
@@ -319,8 +321,8 @@ public partial class TerrainNode : Node3D, ITerrainGround
         set
         {
             _collisionLayer = value;
-            if (_body.IsValid)
-                PhysicsServer3D.BodySetCollisionLayer(_body, value);
+            foreach (var body in _bodies.Values)
+                PhysicsServer3D.BodySetCollisionLayer(body, value);
         }
     }
 
@@ -331,8 +333,8 @@ public partial class TerrainNode : Node3D, ITerrainGround
         set
         {
             _collisionMask = value;
-            if (_body.IsValid)
-                PhysicsServer3D.BodySetCollisionMask(_body, value);
+            foreach (var body in _bodies.Values)
+                PhysicsServer3D.BodySetCollisionMask(body, value);
         }
     }
 
@@ -521,6 +523,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
         foreach (var region in changed)
         {
             region.Commit(heights, !heights);
+            OverviewEdited(region);
             if (_layers.TryGetValue(region.Location, out var layer))
             {
                 if (heights)
@@ -731,6 +734,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
         InTree.Add(this);
         if (!_setUp)
             return;
+        ProcessOverview(delta);
         if (Engine.IsEditorHint() && ++_slotCheck >= 30)
         {
             _slotCheck = 0;
@@ -739,6 +743,8 @@ public partial class TerrainNode : Node3D, ITerrainGround
 
         if (Camera() is not { } camera)
             return;
+        if (_streaming)
+            StreamIfMoved(camera.GlobalPosition);
         // Only as the camera moves: standing still, nothing to move.
         var at = camera.GlobalPosition;
         if (_followed is { } was && was.DistanceSquaredTo(at) < 0.0001f)
@@ -793,24 +799,26 @@ public partial class TerrainNode : Node3D, ITerrainGround
 
         if (!Engine.IsEditorHint() || _editorCollision)
         {
-            _body = PhysicsServer3D.BodyCreate();
-            PhysicsServer3D.BodySetMode(_body, PhysicsServer3D.BodyMode.Static);
-            PhysicsServer3D.BodySetSpace(_body, world.Space);
-            PhysicsServer3D.BodyAttachObjectInstanceId(_body, GetInstanceId());
-            PhysicsServer3D.BodySetCollisionLayer(_body, _collisionLayer);
-            PhysicsServer3D.BodySetCollisionMask(_body, _collisionMask);
+            _collides = true;
             var tiles = _data.RegionSize / CollisionTile;
-            foreach (var location in _layers.Keys)
+            // Streamed: each region's tiles made as it comes in reach (see TerrainStreaming).
+            foreach (var location in _streaming ? [] : _layers.Keys)
             {
                 for (var z = 0; z < tiles; z++)
                 {
                     for (var x = 0; x < tiles; x++)
                         Collide(location * tiles + new Vector2I(x, z));
                 }
+
+                // Put in the world once whole: each shape added to a body in it rebuilds the body.
+                if (_bodies.TryGetValue(location, out var body))
+                    PhysicsServer3D.BodySetSpace(body, world.Space);
             }
         }
 
         _setUp = true;
+        if (_streaming && Camera() is { } seen)
+            StreamAround(seen.GlobalPosition, now: true);
         Follow(Camera()?.GlobalPosition ?? Vector3.Zero);
     }
 
@@ -819,14 +827,19 @@ public partial class TerrainNode : Node3D, ITerrainGround
         foreach (var instance in _instances)
             RenderingServer.FreeRid(instance);
         _instances.Clear();
-        if (_body.IsValid)
-            PhysicsServer3D.FreeRid(_body);
+        foreach (var body in _bodies.Values)
+            PhysicsServer3D.FreeRid(body);
         foreach (var shape in _shapes.Values)
             PhysicsServer3D.FreeRid(shape);
         FreeMaskPatches();
-        _body = default;
+        _bodies.Clear();
+        _collides = false;
         _shapes.Clear();
         _layers.Clear();
+        _freeSlots.Clear();
+        _pending.Clear();
+        _streamedAt = null;
+        _streaming = false;
         // Let go of the meshes and texture arrays now, not when the garbage collector gets to them,
         // which can be after the engine has shut down (and crashes it).
         foreach (var mesh in _meshes)
@@ -837,6 +850,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
         _arrays.Clear();
         _heightMaps = null;
         _controlMaps = null;
+        TearDownOverview();
         _setUp = false;
     }
 
@@ -922,7 +936,9 @@ public partial class TerrainNode : Node3D, ITerrainGround
     /// <summary>What a visual shader reads in place of control words and the region arrays: textures of the same things.</summary>
     private void SetBakedMaps(Rid material, List<TerrainRegion> regions, int[] map)
     {
-        var baked = regions.Select(r => TerrainBake.Bake(r.ControlValues, _data!.RegionSize, _slots)).ToList();
+        // Each region baked once, however many layers it fills (streamed, all start as the first region's).
+        var bakes = new Dictionary<TerrainRegion, (Image[] Weights, Image Flags)>();
+        var baked = regions.Select(r => bakes.TryGetValue(r, out var made) ? made : bakes[r] = TerrainBake.Bake(r.ControlValues, _data!.RegionSize, _slots)).ToList();
         _weightMaps = new Texture2DArray?[TerrainBake.MapsFor(_slots)];
         for (var i = 0; i < _weightMaps.Length; i++)
         {
@@ -943,9 +959,11 @@ public partial class TerrainNode : Node3D, ITerrainGround
         SetParam(material, "_region_lookup", _regionLookup.GetRid());
     }
 
-    private void UpdateBakedMaps(TerrainRegion region, int layer)
+    private void UpdateBakedMaps(TerrainRegion region, int layer) =>
+        GiveBakedMaps(TerrainBake.Bake(region.ControlValues, _data!.RegionSize, _slots), layer);
+
+    private void GiveBakedMaps((Image[] Weights, Image Flags) baked, int layer)
     {
-        var baked = TerrainBake.Bake(region.ControlValues, _data!.RegionSize, _slots);
         for (var i = 0; i < _weightMaps.Length; i++)
             _weightMaps[i]?.UpdateLayer(baked.Weights[i], layer);
         _flagMaps?.UpdateLayer(baked.Flags, layer);
@@ -1197,7 +1215,23 @@ public partial class TerrainNode : Node3D, ITerrainGround
 
         var map = new int[RegionMapSize * RegionMapSize];
         var locations = new Vector2[RegionMapSize * RegionMapSize];
-        for (var layer = 0; layer < regions.Count; layer++)
+        _baked = RenderingServer.GetShaderParameterList(Drawn.Shader.GetRid()).Any(p => p["name"].AsString() == "terrain_weight_maps_0");
+        // The whole terrain, small, for the shader to draw far ground from (when it can): before
+        // deciding how much is streamed, as with it, only near regions need their full maps.
+        SetUpOverview(material, regions);
+        _streaming = StreamDistance > 0f;
+        if (_streaming)
+        {
+            // Streamed: as many layers as can be in reach at once, filled as regions come in reach
+            // (see TerrainStreaming); until then the first region's images hold their places.
+            var slots = System.Math.Min(regions.Count, SlotsFor(StreamDistance + StreamMargin));
+            regions = Enumerable.Repeat(regions[0], slots).ToList();
+            _freeSlots.Clear();
+            for (var slot = slots - 1; slot >= 0; slot--)
+                _freeSlots.Push(slot);
+        }
+
+        for (var layer = 0; layer < (_streaming ? 0 : regions.Count); layer++)
         {
             var at = regions[layer].Location + new Vector2I(RegionMapSize / 2, RegionMapSize / 2);
             if (at.X < 0 || at.Y < 0 || at.X >= RegionMapSize || at.Y >= RegionMapSize)
@@ -1207,14 +1241,20 @@ public partial class TerrainNode : Node3D, ITerrainGround
             _layers[regions[layer].Location] = layer;
         }
 
-        _baked = RenderingServer.GetShaderParameterList(Drawn.Shader.GetRid()).Any(p => p["name"].AsString() == "terrain_weight_maps_0");
         if (_baked)
             SetBakedMaps(material, regions, map);
         _heightMaps = Layers(regions.Select(r => r.Heights!));
-        _controlMaps = Layers(regions.Select(r => r.Control!));
         SetParam(material, "_height_maps", _heightMaps.GetRid());
-        SetParam(material, "_control_maps", _controlMaps.GetRid());
-        SetParam(material, "_color_maps", Array(regions.Select(r => r.Colors!)));
+        // A shader reading baked maps never reads the control words: not put on the GPU for it.
+        if (!_baked)
+        {
+            _controlMaps = Layers(regions.Select(r => r.Control!));
+            SetParam(material, "_control_maps", _controlMaps.GetRid());
+        }
+        _colorMaps = Layers(regions.Select(r => r.Colors!));
+        SetParam(material, "_color_maps", _colorMaps.GetRid());
+        _map = map;
+        _locations = locations;
         SetParam(material, "_region_map", map);
         SetParam(material, "_region_locations", locations);
         SetParam(material, "_region_map_size", RegionMapSize);
@@ -1291,6 +1331,29 @@ public partial class TerrainNode : Node3D, ITerrainGround
     }
 
     /// <summary>
+    /// A region's body, made the first time it is asked for. Made while setting up, it is put in the
+    /// world once its tiles are on it (see SetUp); made later, at once.
+    /// </summary>
+    private Rid BodyOf(Vector2I region)
+    {
+        if (_bodies.TryGetValue(region, out var body))
+            return body;
+        body = PhysicsServer3D.BodyCreate();
+        PhysicsServer3D.BodySetMode(body, PhysicsServer3D.BodyMode.Static);
+        PhysicsServer3D.BodyAttachObjectInstanceId(body, GetInstanceId());
+        PhysicsServer3D.BodySetCollisionLayer(body, _collisionLayer);
+        PhysicsServer3D.BodySetCollisionMask(body, _collisionMask);
+        if (_setUp && GetWorld3D() is { } world)
+            PhysicsServer3D.BodySetSpace(body, world.Space);
+        _bodies[region] = body;
+        return body;
+    }
+
+    /// <summary>The region a collision tile is in.</summary>
+    private Vector2I RegionOfTile(Vector2I tile) =>
+        new(FloorDiv(tile.X * CollisionTile, _data!.RegionSize), FloorDiv(tile.Y * CollisionTile, _data.RegionSize));
+
+    /// <summary>
     /// Makes (or makes again) a collision tile's shape: its <see cref="CollisionTile"/> samples each
     /// way, and the first row and column of the tiles after it, so the shapes meet; NaN in holes,
     /// which the shape leaves open. A heightmap shape splits its cells along the other diagonal from
@@ -1298,12 +1361,29 @@ public partial class TerrainNode : Node3D, ITerrainGround
     /// </summary>
     private void Collide(Vector2I tile)
     {
-        if (!_body.IsValid || _data is null)
+        if (!_collides || _data is null)
             return;
-        var size = _data.RegionSize;
+        var location = RegionOfTile(tile);
+        // Streamed and out of reach: not solid until it comes in reach.
+        if (_streaming && !_layers.ContainsKey(location))
+            return;
+        if (TileShape(tile, MaskShapes()) is { } made)
+            GiveTile(made);
+    }
+
+    /// <summary>A collision tile worked out: its heights (NaN where open), and its patch's faces where masks cut it, if any.</summary>
+    private sealed record TileMade(Vector2I Tile, float[] Heights, float Low, float High, Vector3[]? Faces);
+
+    /// <summary>
+    /// Works out a tile's shape, reading only its regions and the masks' shapes given: safe on a
+    /// loading thread, once the regions round it have been looked up.
+    /// </summary>
+    private TileMade? TileShape(Vector2I tile, List<(Rect2 Box, Vector2[] Shape, float Top)> masks)
+    {
+        var size = _data!.RegionSize;
         var location = new Vector2I(FloorDiv(tile.X * CollisionTile, size), FloorDiv(tile.Y * CollisionTile, size));
-        if (_data.Region(location) is null)
-            return;
+        if (_data.Region(location) is not { } own)
+            return null;
 
         const int across = CollisionTile + 1;
         var heights = new float[across * across];
@@ -1316,7 +1396,9 @@ public partial class TerrainNode : Node3D, ITerrainGround
                 // The sample; past the last region, this tile's edge again.
                 var sx = tile.X * CollisionTile + ox;
                 var sz = tile.Y * CollisionTile + oz;
-                var (region, index) = _data.Sample(sx, sz);
+                // Inside the tile's own region (all but, at its edge, the last row and column): read straight from it.
+                var (lx, lz) = (sx - location.X * size, sz - location.Y * size);
+                var (region, index) = lx < size && lz < size ? (own, lz * size + lx) : _data.Sample(sx, sz);
                 if (region is null)
                     (region, index) = _data.Sample(tile.X * CollisionTile + System.Math.Min(ox, CollisionTile - 1), tile.Y * CollisionTile + System.Math.Min(oz, CollisionTile - 1));
                 var height = TerrainControl.IsHole(region!.ControlValues[index]) ? float.NaN : region.HeightValues[index];
@@ -1329,23 +1411,33 @@ public partial class TerrainNode : Node3D, ITerrainGround
             }
         }
 
+        var faces = MaskFaces(tile, heights, across, masks);
+        return new TileMade(tile, heights, low, high, faces);
+    }
+
+    /// <summary>A tile worked out, given to physics: on the main thread.</summary>
+    private void GiveTile(TileMade made)
+    {
+        const int across = CollisionTile + 1;
+        var tile = made.Tile;
+        var location = RegionOfTile(tile);
         if (!_shapes.TryGetValue(tile, out var shape))
         {
             shape = PhysicsServer3D.HeightmapShapeCreate();
             _shapes[tile] = shape;
-            var middle = (new Vector2(tile.X, tile.Y) + new Vector2(0.5f, 0.5f)) * CollisionTile * _data.VertexSpacing;
+            var middle = (new Vector2(tile.X, tile.Y) + new Vector2(0.5f, 0.5f)) * CollisionTile * _data!.VertexSpacing;
             var turn = new Basis(Vector3.Up, Mathf.Pi / 2f).Scaled(new Vector3(_data.VertexSpacing, 1f, _data.VertexSpacing));
-            PhysicsServer3D.BodyAddShape(_body, shape, new Transform3D(turn, new Vector3(middle.X, 0f, middle.Y)));
+            PhysicsServer3D.BodyAddShape(BodyOf(location), shape, new Transform3D(turn, new Vector3(middle.X, 0f, middle.Y)));
         }
 
-        MaskCollision(tile, heights, across);
+        GivePatch(tile, made.Faces);
         PhysicsServer3D.ShapeSetData(shape, new Godot.Collections.Dictionary
         {
             ["width"] = across,
             ["depth"] = across,
-            ["heights"] = heights,
-            ["min_height"] = low <= high ? low : 0f,
-            ["max_height"] = low <= high ? high : 0f,
+            ["heights"] = made.Heights,
+            ["min_height"] = made.Low <= made.High ? made.Low : 0f,
+            ["max_height"] = made.Low <= made.High ? made.High : 0f,
         });
     }
 }

@@ -22,7 +22,7 @@ public sealed class TerrainGroundBuilder
 
     /// <summary>What a graph is built from, to tell whether one is still right.</summary>
     public static string Signature(int slots, IEnumerable<int> paving, IReadOnlyDictionary<int, int> autoLayers) =>
-        $"masked-top:{slots}:{string.Join(",", paving)}:{string.Join(",", autoLayers.OrderBy(a => a.Key).Select(a => $"{a.Key}@{a.Value}"))}";
+        $"overview-1:skip-2:masked-top:{slots}:{string.Join(",", paving)}:{string.Join(",", autoLayers.OrderBy(a => a.Key).Select(a => $"{a.Key}@{a.Value}"))}";
 
     public static VisualShader Build(int slots, IReadOnlyCollection<int> paving, IReadOnlyDictionary<int, int> autoLayers)
     {
@@ -52,6 +52,9 @@ public sealed class TerrainGroundBuilder
     private float _row;
 
     private Out _size, _density, _map, _half, _halfCell, _zero, _one, _lookup, _heights;
+
+    // Where the overview is: the sample its first texel stands on, how many samples a texel is, and how many texels across it is.
+    private Out _overviewX, _overviewZ, _overviewStep, _overviewTexels, _overviewHeights;
 
     private TerrainGroundBuilder(int slots, IEnumerable<int> paving, IReadOnlyDictionary<int, int> autoLayers)
     {
@@ -233,12 +236,40 @@ public sealed class TerrainGroundBuilder
         return (new Out(layer, 0), localX, localZ);
     }
 
+    /// <summary>One of the overview's textures: the whole terrain, small (see TerrainNode's overview).</summary>
+    private int OverviewParam(string name, bool color) => Add(new VisualShaderNodeTexture2DParameter
+    {
+        ParameterName = name,
+        TextureType = color ? VisualShaderNodeTextureParameter.TextureTypeEnum.Color : VisualShaderNodeTextureParameter.TextureTypeEnum.Data,
+        TextureFilter = VisualShaderNodeTextureParameter.TextureFilterEnum.Linear,
+        TextureRepeat = VisualShaderNodeTextureParameter.TextureRepeatEnum.Disabled,
+    });
+
+    /// <summary>Where a place (in samples) is on the overview.</summary>
+    private int OverviewUv(Out x, Out z) => Uv2(
+        Over(Plus(Over(Minus(x, _overviewX), _overviewStep), _halfCell), _overviewTexels),
+        Over(Plus(Over(Minus(z, _overviewZ), _overviewStep), _halfCell), _overviewTexels));
+
+    private int Sample(Out sampler, Out uv)
+    {
+        var id = Add(new VisualShaderNodeTexture { Source = VisualShaderNodeTexture.SourceEnum.Port });
+        Wire(uv, id, 0);
+        Wire(_zero, id, 1);
+        Wire(sampler, id, 2);
+        return id;
+    }
+
+    /// <summary>1 where a region is loaded (its own maps are read), 0 where the overview stands in for it.</summary>
+    private int Loaded(Out layer) => Smooth(K(0f), K(0.5f), layer);
+
     private int LayerUv((Out Layer, Out X, Out Z) region) => Compose3(region.X, region.Z, Minus(region.Layer, _one));
 
     private Out HeightAt(Out x, Out z)
     {
         var region = Region(Fn(FloatFunc.Round, x), Fn(FloatFunc.Round, z));
-        return new Out(Decompose4(SampleArray(_heights, LayerUv(region), _zero)), 0);
+        var near = new Out(Decompose4(SampleArray(_heights, LayerUv(region), _zero)), 0);
+        var far = new Out(Decompose4(Sample(_overviewHeights, OverviewUv(x, z))), 0);
+        return MixF(far, near, Loaded(region.Layer));
     }
 
     private void Common()
@@ -251,6 +282,10 @@ public sealed class TerrainGroundBuilder
         _halfCell = K(0.5f);
         _zero = K(0f);
         _one = K(1f);
+        _overviewX = Param("terrain_overview_x", 0f);
+        _overviewZ = Param("terrain_overview_z", 0f);
+        _overviewStep = Param("terrain_overview_step", 8f);
+        _overviewTexels = Param("terrain_overview_texels", 1f);
         _lookup = Add(new VisualShaderNodeTexture2DParameter
         {
             ParameterName = "terrain_region_lookup",
@@ -264,7 +299,9 @@ public sealed class TerrainGroundBuilder
         _stage = VisualShader.Type.Vertex;
         Common();
         _heights = ArrayParam("terrain_height_maps", false, false);
+        _overviewHeights = OverviewParam("terrain_overview_heights", false);
         var flags = ArrayParam("terrain_flag_maps", false, true);
+        var overviewFlags = OverviewParam("terrain_overview_flags", false);
         var ring = Param("terrain_ring_cells", 80f);
         var camera = Decompose3(Vec3Param("terrain_camera_pos"));
         var spacing = Param("terrain_vertex_spacing", 1f);
@@ -309,9 +346,9 @@ public sealed class TerrainGroundBuilder
         Place(-1500f);
         var normal = VNorm(Compose3(Minus(h, u), spacing, Minus(h, v)));
         var region = Region(Fn(FloatFunc.Round, sx), Fn(FloatFunc.Round, sz));
-        var flag = Decompose4(SampleArray(flags, LayerUv(region), _zero));
-        // No ground in holes, or outside the regions: not a number, which draws nothing.
-        var gone = Max(new Out(flag, 1), Minus(_one, Smooth(K(0f), K(0.5f), region.Layer)));
+        var flag = Decompose4(Mix4(Sample(overviewFlags, OverviewUv(sx, sz)), SampleArray(flags, LayerUv(region), _zero), Loaded(region.Layer)));
+        // No ground in holes, or outside the regions (holes on the overview): not a number, which draws nothing.
+        var gone = new Out(flag, 1);
         var nan = Over(K(0f), K(0f));
         var placed = Add(new VisualShaderNodeIf());
         Wire(gone, placed, 0);
@@ -346,6 +383,63 @@ public sealed class TerrainGroundBuilder
         return id;
     }
 
+    /// <summary>
+    /// What a slot's textures read at a pixel: its near, far and farthest scales blended by distance,
+    /// as mix(mix(near, far, farMix), farthest, lastMix). But only what counts is read: nothing where
+    /// the slot has no weight (it adds nothing there), and of the three scales only those the blend
+    /// takes any of; most pixels have one or two slots, at one or two scales. The same blend as reading
+    /// them all. Mipmaps are chosen from how the places change across pixels, worked out before any
+    /// is skipped (a texture read under an if cannot tell, where the pixels beside it skip it).
+    /// </summary>
+    private (Out Albedo, Out Normal) Textures(Out albedos, Out normals, Out weight, Out near, Out far, Out last, Out farMix, Out lastMix)
+    {
+        var node = new VisualShaderNodeExpression
+        {
+            Expression = """
+                albedo = vec4(0.0);
+                normal = vec4(0.0);
+                vec2 near_dx = dFdx(near_uv.xy), near_dy = dFdy(near_uv.xy);
+                vec2 far_dx = dFdx(far_uv.xy), far_dy = dFdy(far_uv.xy);
+                vec2 last_dx = dFdx(last_uv.xy), last_dy = dFdy(last_uv.xy);
+                if (weight > 0.0) {
+                	float near_share = (1.0 - far_mix) * (1.0 - last_mix);
+                	float far_share = far_mix * (1.0 - last_mix);
+                	if (near_share > 0.0) {
+                		albedo += textureGrad(albedos, near_uv, near_dx, near_dy) * near_share;
+                		normal += textureGrad(normals, near_uv, near_dx, near_dy) * near_share;
+                	}
+                	if (far_share > 0.0) {
+                		albedo += textureGrad(albedos, far_uv, far_dx, far_dy) * far_share;
+                		normal += textureGrad(normals, far_uv, far_dx, far_dy) * far_share;
+                	}
+                	if (last_mix > 0.0) {
+                		albedo += textureGrad(albedos, last_uv, last_dx, last_dy) * last_mix;
+                		normal += textureGrad(normals, last_uv, last_dx, last_dy) * last_mix;
+                	}
+                }
+                """,
+        };
+        var inputs = new (VisualShaderNode.PortType Type, string Name, Out From)[]
+        {
+            (VisualShaderNode.PortType.Sampler, "albedos", albedos),
+            (VisualShaderNode.PortType.Sampler, "normals", normals),
+            (VisualShaderNode.PortType.Scalar, "weight", weight),
+            (VisualShaderNode.PortType.Vector3D, "near_uv", near),
+            (VisualShaderNode.PortType.Vector3D, "far_uv", far),
+            (VisualShaderNode.PortType.Vector3D, "last_uv", last),
+            (VisualShaderNode.PortType.Scalar, "far_mix", farMix),
+            (VisualShaderNode.PortType.Scalar, "last_mix", lastMix),
+        };
+        for (var i = 0; i < inputs.Length; i++)
+            node.AddInputPort(i, (int)inputs[i].Type, inputs[i].Name);
+        node.AddOutputPort(0, (int)VisualShaderNode.PortType.Vector4D, "albedo");
+        node.AddOutputPort(1, (int)VisualShaderNode.PortType.Vector4D, "normal");
+        var id = Add(node);
+        for (var i = 0; i < inputs.Length; i++)
+            Wire(inputs[i].From, id, i);
+        return (new Out(id, 0), new Out(id, 1));
+    }
+
     /// <summary>A group of slots' sums, blended among themselves.</summary>
     private sealed class Group
     {
@@ -369,17 +463,22 @@ public sealed class TerrainGroundBuilder
         var maps = TerrainBake.MapsFor(_slots);
         var weightParams = Enumerable.Range(0, maps).Select(i => ArrayParam($"terrain_weight_maps_{i}", false, true)).ToList();
         var colours = ArrayParam("terrain_color_maps", true, true);
+        var overviewFlags = OverviewParam("terrain_overview_flags", false);
+        var overviewWeights = Enumerable.Range(0, maps).Select(i => OverviewParam($"terrain_overview_weights_{i}", false)).ToList();
+        var overviewColours = OverviewParam("terrain_overview_colors", true);
         var albedos = ArrayParam("terrain_texture_array_albedo", true, true);
         var normals = ArrayParam("terrain_texture_array_normal", false, true);
 
         Place(-5400f);
         var region = Region(Times(wx, _density), Times(wz, _density));
         var uv = LayerUv(region);
-        var flag = Decompose4(SampleArray(flags, uv, _zero));
-        var inside = Smooth(K(0f), K(0.5f), region.Layer);
-        var autoAmount = Max(new Out(flag, 0), Minus(_one, inside));
-        var tint = SampleArray(colours, uv, _zero);
-        var weights = weightParams.Select(p => Decompose4(SampleArray(p, uv, _zero))).ToList();
+        // Where its region is loaded, its own maps; elsewhere, the overview's (see TerrainNode's overview).
+        var overviewUv = OverviewUv(Times(wx, _density), Times(wz, _density));
+        var inside = Loaded(region.Layer);
+        var flag = Decompose4(Mix4(Sample(overviewFlags, overviewUv), SampleArray(flags, uv, _zero), inside));
+        var autoAmount = new Out(flag, 0);
+        var tint = Mix4(Sample(overviewColours, overviewUv), SampleArray(colours, uv, _zero), inside);
+        var weights = weightParams.Select((p, i) => Decompose4(Mix4(Sample(overviewWeights[i], overviewUv), SampleArray(p, uv, _zero), inside))).ToList();
 
         // ---- The auto-shader, by height and slope ----
         Place(-4800f);
@@ -444,8 +543,7 @@ public sealed class TerrainGroundBuilder
             var nearUv = VPlus(VScale(ground, scale), Compose3(halfUv, halfUv, slot));
             var farUv = VPlus(VScale(farGround, Times(scale, farScale)), Compose3(halfUv, halfUv, slot));
             var lastUv = VPlus(VScale(lastGround, Times(scale, lastScale)), Compose3(halfUv, halfUv, slot));
-            var albedo = Mix4(Mix4(SampleArray(albedos, nearUv), SampleArray(albedos, farUv), farMix), SampleArray(albedos, lastUv), lastMix);
-            var normal = Mix4(Mix4(SampleArray(normals, nearUv), SampleArray(normals, farUv), farMix), SampleArray(normals, lastUv), lastMix);
+            var (albedo, normal) = Textures(albedos, normals, w, nearUv, farUv, lastUv, farMix, lastMix);
             var a = Decompose4(albedo);
             var o = Decompose4(normal);
             var albedoRgb = Compose3(new Out(a, 0), new Out(a, 1), new Out(a, 2));

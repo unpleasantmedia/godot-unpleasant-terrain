@@ -62,8 +62,20 @@ public partial class TerrainData : Resource
     /// <summary>A region, if it has one there.</summary>
     public TerrainRegion? Region(Vector2I location)
     {
-        if (_looked.TryGetValue(location, out var known))
-            return known;
+        // Read from a terrain's loading thread too (see TerrainStreaming): only ever found there, as
+        // the main thread looks each region up before handing it over.
+        lock (_looked)
+        {
+            if (_looked.TryGetValue(location, out var known))
+                return known;
+        }
+
+        lock (_looked)
+            return Find(location);
+    }
+
+    private TerrainRegion? Find(Vector2I location)
+    {
         if (_regions.TryGetValue(location, out var loaded))
             return _looked[location] = loaded;
         var path = $"{Folder}/{FileOf(location)}";

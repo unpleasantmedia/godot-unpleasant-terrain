@@ -20,6 +20,9 @@ public partial class TerrainNode
     /// <summary>How many pixels across the mask's texture may be: a wider area gets bigger pixels.</summary>
     private const int MaskMaxSize = 4096;
 
+    /// <summary>How far past its shape a mask cuts the ground's collision, in metres.</summary>
+    private const float MaskCutOverlap = 0.02f;
+
     private readonly Dictionary<string, (Vector2[] Shape, float Top)[]> _masks = [];
     private readonly Dictionary<Vector2I, Rid> _maskPatches = [];
     private readonly List<Rect2> _maskChanges = [];
@@ -38,10 +41,11 @@ public partial class TerrainNode
             return;
         }
 
+        // Each shape's own bounds: a road's tunnels can be far apart, and the ground between them is not changed.
         if (_masks.TryGetValue(name, out var old))
-            _maskChanges.Add(BoundsOf(old.Select(o => o.Shape)));
+            _maskChanges.AddRange(old.Select(o => BoundsOf([o.Shape])));
         _masks[name] = [.. shapes.Select((shape, i) => (shape, tops[i]))];
-        _maskChanges.Add(BoundsOf(shapes));
+        _maskChanges.AddRange(shapes.Select(shape => BoundsOf([shape])));
         QueueMasks();
     }
 
@@ -50,7 +54,7 @@ public partial class TerrainNode
     {
         if (!_masks.Remove(name, out var old))
             return;
-        _maskChanges.Add(BoundsOf(old.Select(o => o.Shape)));
+        _maskChanges.AddRange(old.Select(o => BoundsOf([o.Shape])));
         QueueMasks();
     }
 
@@ -196,14 +200,19 @@ public partial class TerrainNode
     /// shape touches, which takes out each cell round those samples too. Each of those cells goes
     /// into the tile's patch, a mesh of it less the shapes, so what is solid is what is drawn.
     /// </summary>
-    private void MaskCollision(Vector2I tile, float[] heights, int across)
+    /// <summary>Every mask's shapes with their bounds, as they are now: for tiles worked out on a loading thread, which must not read the masks as they change.</summary>
+    private List<(Rect2 Box, Vector2[] Shape, float Top)> MaskShapes() =>
+        _masks.Values.SelectMany(s => s).Select(s => (Box: BoundsOf([s.Shape]), s.Shape, s.Top)).ToList();
+
+    /// <summary>The faces of a tile's patch (null if it needs none), opening its heights where masked: reads only what it is given and the regions.</summary>
+    private Vector3[]? MaskFaces(Vector2I tile, float[] heights, int across, List<(Rect2 Box, Vector2[] Shape, float Top)> all)
     {
-        if (_masks.Count == 0 && !_maskPatches.ContainsKey(tile))
-            return;
+        if (all.Count == 0)
+            return null;
         var spacing = _data!.VertexSpacing;
         var (firstX, firstZ) = (tile.X * CollisionTile, tile.Y * CollisionTile);
         var area = new Rect2(new Vector2(firstX - 2, firstZ - 2) * spacing, Vector2.One * (CollisionTile + 4) * spacing);
-        var shapes = _masks.Values.SelectMany(s => s).Select(s => (Box: BoundsOf([s.Shape]), s.Shape, s.Top)).Where(s => s.Box.Intersects(area)).ToList();
+        var shapes = all.Where(s => s.Box.Intersects(area)).ToList();
         var taken = new HashSet<(int X, int Z)>();
         if (shapes.Count > 0)
         {
@@ -235,16 +244,22 @@ public partial class TerrainNode
             }
         }
 
+        return faces.Count == 0 ? null : faces.ToArray();
+    }
+
+    /// <summary>A tile's patch given its faces, made if it has none yet; emptied if it has one and needs none now.</summary>
+    private void GivePatch(Vector2I tile, Vector3[]? faces)
+    {
         if (!_maskPatches.TryGetValue(tile, out var patch))
         {
-            if (faces.Count == 0)
+            if (faces is null)
                 return;
             patch = PhysicsServer3D.ConcavePolygonShapeCreate();
             _maskPatches[tile] = patch;
-            PhysicsServer3D.BodyAddShape(_body, patch);
+            PhysicsServer3D.BodyAddShape(BodyOf(RegionOfTile(tile)), patch);
         }
 
-        PhysicsServer3D.ShapeSetData(patch, new Godot.Collections.Dictionary { ["faces"] = faces.ToArray(), ["backface_collision"] = true });
+        PhysicsServer3D.ShapeSetData(patch, new Godot.Collections.Dictionary { ["faces"] = faces ?? [], ["backface_collision"] = true });
     }
 
     /// <summary>A cell of samples, as triangles less the shapes over it, added to faces. None if any of its samples is off the ground or a hole.</summary>
@@ -259,7 +274,9 @@ public partial class TerrainNode
 
         if (Corner(x, z) is not { } a || Corner(x + 1, z) is not { } b || Corner(x, z + 1) is not { } c || Corner(x + 1, z + 1) is not { } d)
             return;
-        var over = ShapesOver(x, z, shapes);
+        // A little wider, for neighbouring shapes to overlap: left to meet edge to edge, rounding leaves
+        // hairline gaps, whose slivers of ground can't be seen, but are solid.
+        var over = ShapesOver(x, z, shapes).SelectMany(shape => Geometry2D.OffsetPolygon(shape, MaskCutOverlap)).ToList();
         foreach (var (p, q, r) in new[] { (a, b, c), (b, d, c) })
         {
             var left = new List<Vector2[]> { new[] { Flat(p), Flat(q), Flat(r) } };

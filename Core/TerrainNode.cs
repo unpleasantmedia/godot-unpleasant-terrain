@@ -5,12 +5,12 @@ using Godot;
 namespace UnpleasantMedia.UnpleasantTerrain;
 
 /// <summary>
-/// Draws a terrain's ground (<see cref="Data"/>) with its <see cref="Material"/>, as a clipmap: a
+/// Draws a terrain's ground (<see cref="Data"/>) with its <see cref="AutoMaterial"/>, as a clipmap: a
 /// square of <see cref="RingCells"/> cells each way round the camera, then <see cref="Levels"/> - 1
 /// square rings round it, each with cells twice the size of the one inside it. The rings are flat
 /// grids drawn straight through the RenderingServer (no nodes); the material's shader lifts them to
 /// the heights it reads from the regions' maps, which this puts on the GPU as texture arrays, along
-/// with the ground textures (<see cref="Textures"/>). The rings follow the camera in steps of their
+/// with the ground's materials (<see cref="Materials"/>). The rings follow the camera in steps of their
 /// cells' size, so moving round redraws nothing.
 ///
 /// It is also the ground to collide with (a heightmap shape per region, in one static body, in the
@@ -64,8 +64,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
 
     /// <summary>What it is drawn with: its own material, or else its own copy of the default one (a material holds its terrain's maps, so terrains can't share one).</summary>
     private ShaderMaterial Drawn => _material ??= (ShaderMaterial)GD.Load<ShaderMaterial>(DefaultMaterial).Duplicate();
-    private TerrainTextureList? _textures;
-    private bool _useFlatColours;
+    private TerrainMaterialList? _textures;
     private float _edgeHeightNoise = 1.5f;
     private float _edgeSlopeNoise = 4f;
     private float _edgeNoiseSize = 25f;
@@ -136,9 +135,14 @@ public partial class TerrainNode : Node3D, ITerrainGround
         }
     }
 
-    /// <summary>The ground's material. Its copy of the default one (Shaders/TerrainGroundDefault.tres, which clearing this goes back to) has a graph built for its textures, set up by the settings below; or assign a ShaderMaterial with a shader written for this terrain.</summary>
+    /// <summary>
+    /// The ground's shader material, filled in by the terrain: its copy of the default one
+    /// (Shaders/TerrainGroundDefault.tres, which clearing this goes back to) has a graph built for its
+    /// <see cref="Materials"/>, set up by the settings below; or assign a ShaderMaterial with a shader
+    /// written for this terrain.
+    /// </summary>
     [Export]
-    public ShaderMaterial? Material
+    public ShaderMaterial? AutoMaterial
     {
         get => Drawn;
         set
@@ -148,8 +152,9 @@ public partial class TerrainNode : Node3D, ITerrainGround
         }
     }
 
+    /// <summary>The ground's materials, by slot: the order the Terrain dock lists them in, and the ids painted with.</summary>
     [Export]
-    public TerrainTextureList? Textures
+    public TerrainMaterialList? Materials
     {
         get => _textures;
         set
@@ -177,19 +182,6 @@ public partial class TerrainNode : Node3D, ITerrainGround
         field = value;
         if (Generated)
             RenderingServer.MaterialSetParam(Drawn.GetRid(), parameter, value);
-    }
-
-    [ExportGroup("Flat Colours")]
-    [Export]
-    public bool UseFlatColours
-    {
-        get => _useFlatColours;
-        set
-        {
-            _useFlatColours = value;
-            if (Generated)
-                RenderingServer.MaterialSetParam(Drawn.GetRid(), "use_flat_colours", value);
-        }
     }
 
     [ExportGroup("Auto Shader")]
@@ -972,7 +964,7 @@ public partial class TerrainNode : Node3D, ITerrainGround
     /// <summary>The graph Shaders/TerrainGroundVisual.tres holds: for a terrain with no textures.</summary>
     public VisualShader BuildDefaultShader() => TerrainGroundBuilder.Build(PlainColors.Length, [4, 5], PlainLayers);
 
-    private List<TerrainTexture?> SlotTextures() => _textures?.Textures.Select(t => (TerrainTexture?)t).ToList() ?? [];
+    private List<TerrainMaterial?> SlotTextures() => _textures?.Materials.Select(t => (TerrainMaterial?)t).ToList() ?? [];
 
     private static Dictionary<int, int> PlainLayers => PlainRules.ToDictionary(r => r.Key, r => r.Value.Layer);
 
@@ -1151,24 +1143,21 @@ public partial class TerrainNode : Node3D, ITerrainGround
             SetSlots(Drawn.GetRid());
     }
 
-    private string SlotValues() => string.Join(";", SlotTextures().Select(t => t is null ? "" : $"{t.UvScale},{t.NormalDepth},{t.RoughnessMod},{t.Tint},{t.FlatColor},{t.FlatRoughness},{t.AutoMinHeight},{t.AutoMaxHeight},{t.AutoHeightBlend},{t.AutoMinSlope},{t.AutoMaxSlope},{t.AutoSlopeBlend}"));
+    private string SlotValues() => string.Join(";", SlotTextures().Select(t => t is null ? "" : $"{t.UsedUvScale},{t.UsedNormalDepth},{t.UsedRoughnessMod},{t.UsedTint},{t.AutoMinHeight},{t.AutoMaxHeight},{t.AutoHeightBlend},{t.AutoMinSlope},{t.AutoMaxSlope},{t.AutoSlopeBlend}"));
 
     /// <summary>Each slot's settings, from its texture; and the shader's own, from this node.</summary>
     private void SetSlots(Rid material)
     {
         var textures = SlotTextures();
-        var hasImages = textures.Any(t => t?.Albedo is not null);
-        SetParam(material, "_flat_amount", hasImages ? 0f : 1f);
         for (var i = 0; i < _slots; i++)
         {
             var texture = i < textures.Count ? textures[i] : null;
             var plain = i < PlainColors.Length ? PlainColors[i] : new Color(0.5f, 0.5f, 0.5f);
-            SetParam(material, $"_slot_{i}_uv_scale", texture?.UvScale ?? 0f);
-            SetParam(material, $"_slot_{i}_normal_depth", texture?.NormalDepth ?? 0f);
-            SetParam(material, $"_slot_{i}_roughness_mod", texture?.RoughnessMod ?? 0f);
-            SetParam(material, $"_slot_{i}_tint", texture?.Tint ?? Colors.White);
-            SetParam(material, $"_slot_{i}_flat_colour", texture?.FlatColor ?? plain);
-            SetParam(material, $"_slot_{i}_flat_roughness", texture?.FlatRoughness ?? 0.9f);
+            SetParam(material, $"_slot_{i}_uv_scale", texture?.UsedUvScale ?? 0f);
+            SetParam(material, $"_slot_{i}_normal_depth", texture?.UsedNormalDepth ?? 0f);
+            SetParam(material, $"_slot_{i}_roughness_mod", texture?.UsedRoughnessMod ?? 0f);
+            // With no texture of its own (see SetTextures: a plain white one), its tint is its flat colour.
+            SetParam(material, $"_slot_{i}_tint", texture?.UsedTint ?? plain);
             var rule = texture is { } own
                 ? new AutoRule(own.AutoLayer, own.AutoMinHeight, own.AutoMaxHeight, own.AutoHeightBlend, own.AutoMinSlope, own.AutoMaxSlope, own.AutoSlopeBlend)
                 : PlainRules.GetValueOrDefault(i);
@@ -1188,7 +1177,6 @@ public partial class TerrainNode : Node3D, ITerrainGround
 
     private void SetSettings(Rid material)
     {
-        RenderingServer.MaterialSetParam(material, "use_flat_colours", _useFlatColours);
         RenderingServer.MaterialSetParam(material, "edge_height_noise", _edgeHeightNoise);
         RenderingServer.MaterialSetParam(material, "edge_slope_noise", _edgeSlopeNoise);
         RenderingServer.MaterialSetParam(material, "edge_noise_size", _edgeNoiseSize);
@@ -1266,47 +1254,49 @@ public partial class TerrainNode : Node3D, ITerrainGround
         return true;
     }
 
-    /// <summary>Puts the ground textures on the GPU as two texture arrays (all made the same size and format), with each one's settings.</summary>
+    /// <summary>
+    /// Puts the ground textures on the GPU as two texture arrays (all made the same size and format),
+    /// with each one's settings. A slot with no albedo texture gets a plain white one, and with no
+    /// normal map a flat one (roughness 1 in alpha): it then draws as a flat colour, its tint, with
+    /// its roughness. With no textures at all, every slot is one of those.
+    /// </summary>
     private void SetTextures(Rid material)
     {
-        var textures = _textures?.Textures.Where(t => t is not null).ToList() ?? new List<TerrainTexture>();
-        var albedos = Same(textures.Select(t => t.Albedo?.GetImage()).ToList());
-        var normals = Same(textures.Select(t => t.Normal?.GetImage()).ToList());
-        // With no textures to draw, its flat colours; with some, as its material says.
-        if (!_baked)
-            SetParam(material, "use_flat_colours", albedos.Count == 0 || Drawn.GetShaderParameter("use_flat_colours").AsBool());
-        if (albedos.Count > 0)
-            SetParam(material, "_texture_array_albedo", Array(albedos));
-        if (normals.Count > 0)
-            SetParam(material, "_texture_array_normal", Array(normals));
+        var textures = _textures?.Materials.Where(t => t is not null).ToList() ?? new List<TerrainMaterial>();
+        // As many layers as it has textures (the shader's slots past them have no weight anywhere);
+        // with none, one for each slot, each a flat colour.
+        var count = textures.Count > 0 ? textures.Count : _slots;
+        TerrainMaterial? At(int i) => i < textures.Count ? textures[i] : null;
+        var albedos = Same(Enumerable.Range(0, count).Select(i => At(i)?.UsedAlbedo?.GetImage()).ToList(), Colors.White);
+        var normals = Same(Enumerable.Range(0, count).Select(i => At(i)?.UsedNormal?.GetImage()).ToList(), new Color(0.5f, 0.5f, 1f, 1f));
+        SetParam(material, "_texture_array_albedo", Array(albedos));
+        SetParam(material, "_texture_array_normal", Array(normals));
 
-        float[] Each(System.Func<TerrainTexture, float> of) =>
+        float[] Each(System.Func<TerrainMaterial, float> of) =>
             Enumerable.Range(0, 32).Select(i => i < textures.Count ? of(textures[i]) : 0f).ToArray();
         if (_baked)
-        {
-            SetParam(material, "_flat_amount", albedos.Count == 0 ? 1f : 0f);
             SetSlots(material);
-        }
 
-        SetParam(material, "_texture_uv_scale_array", Each(t => t.UvScale));
-        SetParam(material, "_texture_normal_depth_array", Each(t => t.NormalDepth));
-        SetParam(material, "_texture_ao_strength_array", Each(t => t.AoStrength));
-        SetParam(material, "_texture_roughness_mod_array", Each(t => t.RoughnessMod));
+        SetParam(material, "_texture_uv_scale_array", Each(t => t.UsedUvScale));
+        SetParam(material, "_texture_normal_depth_array", Each(t => t.UsedNormalDepth));
+        SetParam(material, "_texture_ao_strength_array", Each(t => t.UsedAoStrength));
+        SetParam(material, "_texture_roughness_mod_array", Each(t => t.UsedRoughnessMod));
         SetParam(material, "_texture_color_array",
-            Enumerable.Range(0, 32).Select(i => i < textures.Count ? textures[i].Tint : Colors.White).ToArray());
+            Enumerable.Range(0, 32).Select(i => i < textures.Count ? textures[i].UsedTint : Colors.White).ToArray());
     }
 
-    /// <summary>Images as one texture array takes them: as they are if all alike, else each made the largest's size, uncompressed, with mipmaps.</summary>
-    private static List<Image> Same(List<Image?> images)
+    /// <summary>
+    /// Images as one texture array takes them: as they are if all alike, else each made the largest's
+    /// size, uncompressed, with mipmaps. One missing is filled with a plain one of this colour.
+    /// </summary>
+    private static List<Image> Same(List<Image?> images, Color plain)
     {
-        var found = images.OfType<Image>().ToList();
-        if (found.Count == 0 || found.Count != images.Count)
-            return new List<Image>();
+        var size = images.OfType<Image>().Select(i => i.GetSize()).DefaultIfEmpty(new Vector2I(4, 4)).Aggregate((a, b) => a.X * a.Y >= b.X * b.Y ? a : b);
+        var found = images.Select(i => i ?? Plain(size, plain)).ToList();
         var first = found[0];
         if (found.All(i => i.GetSize() == first.GetSize() && i.GetFormat() == first.GetFormat() && i.HasMipmaps() == first.HasMipmaps()))
             return found;
 
-        var size = found.Select(i => i.GetSize()).Aggregate((a, b) => a.X * a.Y >= b.X * b.Y ? a : b);
         return found.Select(i =>
         {
             var copy = (Image)i.Duplicate();
@@ -1318,6 +1308,15 @@ public partial class TerrainNode : Node3D, ITerrainGround
             copy.GenerateMipmaps();
             return copy;
         }).ToList();
+    }
+
+    /// <summary>A plain image of one colour, with mipmaps, to stand in for a missing texture.</summary>
+    private static Image Plain(Vector2I size, Color colour)
+    {
+        var image = Image.CreateEmpty(size.X, size.Y, false, Image.Format.Rgba8);
+        image.Fill(colour);
+        image.GenerateMipmaps();
+        return image;
     }
 
     private Rid Array(IEnumerable<Image> images) => Layers(images).GetRid();

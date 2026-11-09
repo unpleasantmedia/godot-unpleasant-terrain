@@ -71,14 +71,14 @@ Raise, Lower, Paint and Auto can each have their own shape, picked under **Brush
 |---|---|
 | **Data** | A `TerrainData` resource holding the ground |
 | **Material** | A `ShaderMaterial`; every terrain starts with its own copy of `Shaders/TerrainGroundDefault.tres`, and clearing this goes back to a new copy |
-| **Textures** | A `TerrainTextureList` resource of ground textures; their order is the order in the dock |
+| **Textures** | A `TerrainMaterialList` resource of ground textures; their order is the order in the dock |
 | **Levels** | How many rings of detail are drawn |
 | **Editor Collision** | Whether the ground collides in the editor as well as in the game |
 | **Collision Layer**, **Collision Mask** | Physics layers for the ground |
 
 `TerrainData` sets **Region Size** (samples across a region), **Vertex Spacing** (metres between samples; set both before adding regions), **Folder** (where region files are kept) and **Locations** (which regions it has).
 
-Each `TerrainTexture` needs an **Albedo** (height in alpha) and a **Normal** (roughness in alpha), and has **Tint**, **UV Scale**, **Normal Depth**, **AO Strength** and **Roughness Mod** settings.
+Each `TerrainMaterial` needs an **Albedo** (height in alpha) and a **Normal** (roughness in alpha), and has **Tint**, **UV Scale**, **Normal Depth**, **AO Strength** and **Roughness Mod** settings.
 
 ### Shader
 

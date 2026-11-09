@@ -22,7 +22,7 @@ public sealed class TerrainGroundBuilder
 
     /// <summary>What a graph is built from, to tell whether one is still right.</summary>
     public static string Signature(int slots, IEnumerable<int> paving, IReadOnlyDictionary<int, int> autoLayers) =>
-        $"overview-1:skip-2:masked-top:{slots}:{string.Join(",", paving)}:{string.Join(",", autoLayers.OrderBy(a => a.Key).Select(a => $"{a.Key}@{a.Value}"))}";
+        $"overview-1:skip-2:noflat-1:masked-top:{slots}:{string.Join(",", paving)}:{string.Join(",", autoLayers.OrderBy(a => a.Key).Select(a => $"{a.Key}@{a.Value}"))}";
 
     public static VisualShader Build(int slots, IReadOnlyCollection<int> paving, IReadOnlyDictionary<int, int> autoLayers)
     {
@@ -511,8 +511,6 @@ public sealed class TerrainGroundBuilder
 
         // ---- Shared for every slot ----
         Place(-3300f);
-        var flatToggle = Add(new VisualShaderNodeBooleanParameter { ParameterName = "use_flat_colours", DefaultValueEnabled = true, DefaultValue = false });
-        var flatAmount = Max(Param("terrain_flat_amount", 0f), flatToggle);
         var sharp = Plus(Times(Param("blend_sharpness", 0.5f, 0f, 1f), K(56f)), K(8f));
         var ground = Compose3(wx, wz, K(0f));
         var halfUv = K(0.5f);
@@ -548,13 +546,13 @@ public sealed class TerrainGroundBuilder
             var o = Decompose4(normal);
             var albedoRgb = Compose3(new Out(a, 0), new Out(a, 1), new Out(a, 2));
             var tintColor = ColorParam($"terrain_slot_{i}_tint", Colors.White);
-            var flatColor = ColorParam($"terrain_slot_{i}_flat_colour", new Color(0.5f, 0.5f, 0.5f));
-            var tinted = Mix3(VOp(VectorOp.Mul, albedoRgb, tintColor), flatColor, flatAmount);
-            var heightA = MixF(new Out(a, 3), K(0.5f), flatAmount);
-            var rough = MixF(Plus(new Out(o, 3), Param($"terrain_slot_{i}_roughness_mod", 0f)), Param($"terrain_slot_{i}_flat_roughness", 0.9f), flatAmount);
+            // A slot with no texture has a plain white one: its tint is then its flat colour.
+            var tinted = VOp(VectorOp.Mul, albedoRgb, tintColor);
+            var heightA = new Out(a, 3);
+            var rough = Plus(new Out(o, 3), Param($"terrain_slot_{i}_roughness_mod", 0f));
             // Unpacked: x and y lie along the ground, z is up; packed x, z, y as the textures are.
             var unpacked = VOp(VectorOp.Sub, Compose3(Times(new Out(o, 0), K(2f)), Times(new Out(o, 2), K(2f)), Times(new Out(o, 1), K(2f))), C3(Vector3.One));
-            var normalMap = Mix3(unpacked, C3(Vector3.Up), flatAmount);
+            var normalMap = unpacked;
             var up = Max(Min(ny, _one), K(0f));
             var strengthBase = Max(Plus(w, Times(heightA, up)), K(0f));
             var strength = Times(Op(FloatOp.Pow, strengthBase, sharp), Min(Times(Max(w, K(0f)), K(1000f)), _one));

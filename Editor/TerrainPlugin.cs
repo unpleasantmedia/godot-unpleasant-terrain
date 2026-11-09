@@ -356,7 +356,7 @@ public partial class TerrainPlugin : EditorPlugin
         var over = PaintOverList;
         var overPicked = over?.GetSelectedItems() ?? [];
         over?.Clear();
-        var list = _terrain?.Textures?.Textures;
+        var list = _terrain?.Materials?.Materials;
         if (_hint is not null)
             _hint.Text = _terrain is null ? "Select a TerrainNode to paint with its textures."
                 : list is not { Count: > 0 } ? "Give the TerrainNode a texture list (Textures) to paint with."
@@ -365,9 +365,9 @@ public partial class TerrainPlugin : EditorPlugin
             return;
         foreach (var texture in list)
         {
-            var index = _textures.AddItem(texture?.Name ?? "", texture?.Albedo);
+            var index = _textures.AddItem(texture?.Name ?? "", texture?.UsedAlbedo);
             _textures.SetItemTooltip(index, $"{texture?.Name} (id {index})");
-            over?.AddItem(texture?.Name ?? "", texture?.Albedo);
+            over?.AddItem(texture?.Name ?? "", texture?.UsedAlbedo);
         }
 
         foreach (var index in overPicked)

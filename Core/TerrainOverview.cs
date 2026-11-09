@@ -82,26 +82,32 @@ public partial class TerrainNode
     {
         if (region.Heights is null || region.Control is null || region.Colors is null)
             return;
-        var size = _data!.RegionSize;
         var cells = OverviewCells;
-        var step = size / cells;
-        var heights = region.Heights.GetData();
-        var control = region.Control.GetData();
-        // Its colours' first level: the image has mipmaps after it.
-        var colors = region.Colors.GetData();
+        // Every so many samples taken on the engine's side (a nearest resize takes sample x * step,
+        // its bits as they are): only that small copy comes over here. Read whole, the regions'
+        // images were 12 MB each to let go of again, gigabytes in all as a level came in.
+        var heights = Small(region.Heights, cells);
+        var control = Small(region.Control, cells);
+        var colors = Small(region.Colors, cells);
         var firstX = (region.Location.X - _overviewFirst.X) * cells + 1;
         var firstZ = (region.Location.Y - _overviewFirst.Y) * cells + 1;
         for (var z = 0; z < cells; z++)
         {
             var row = (firstZ + z) * _overviewTexels + firstX;
-            for (var x = 0; x < cells; x++)
-            {
-                var sample = z * step * size + x * step;
-                _overviewHeights[row + x] = BitConverter.ToSingle(heights, sample * 4);
-                _overviewControl[row + x] = BitConverter.ToUInt32(control, sample * 4);
-                Buffer.BlockCopy(colors, sample * 4, _overviewColors, (row + x) * 4, 4);
-            }
+            Buffer.BlockCopy(heights, z * cells * 4, _overviewHeights, row * 4, cells * 4);
+            Buffer.BlockCopy(control, z * cells * 4, _overviewControl, row * 4, cells * 4);
+            Buffer.BlockCopy(colors, z * cells * 4, _overviewColors, row * 4, cells * 4);
         }
+    }
+
+    /// <summary>An image's every (size / cells)th sample each way, as bytes: made small on the engine's side, without its mipmaps.</summary>
+    private static byte[] Small(Image image, int cells)
+    {
+        using var copy = (Image)image.Duplicate();
+        if (copy.HasMipmaps())
+            copy.ClearMipmaps();
+        copy.Resize(cells, cells, Image.Interpolation.Nearest);
+        return copy.GetData();
     }
 
     /// <summary>The overview's textures made from it as it is now, and given to the shader (or updated, if they were already).</summary>

@@ -129,6 +129,8 @@ public partial class TerrainPlugin : EditorPlugin
     // Import Heightmap pressed: its dialog, made the first time.
     private void ImportPressed()
     {
+        if (!TerrainNode.MayEdit("Importing a heightmap"))
+            return;
         if (!Editing)
         {
             GD.PushWarning("Terrain: select a TerrainNode first.");
@@ -389,10 +391,24 @@ public partial class TerrainPlugin : EditorPlugin
 
     private bool Active => Editing && _terrain!.Data is not null && Current != Brush.None;
 
+    private bool _locked;
+
     public override int _Forward3DGuiInput(Camera3D camera, InputEvent @event)
     {
         if (!Active || _terrain is null)
             return (int)AfterGuiInput.Pass;
+        // A job reading the terrain: no brush on it until it is done (its clicks taken, so nothing else is picked).
+        if (TerrainNode.ReadByJobs)
+        {
+            if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true })
+            {
+                TerrainNode.MayEdit("Painting");
+                return (int)AfterGuiInput.Stop;
+            }
+
+            return (int)AfterGuiInput.Pass;
+        }
+
         _camera = camera;
         switch (@event)
         {
@@ -440,6 +456,24 @@ public partial class TerrainPlugin : EditorPlugin
     // While the mouse is held, the brush keeps working where it is, by the time gone since it last did.
     public override void _Process(double delta)
     {
+        // Its tools greyed out while a job reads the terrain.
+        var locked = TerrainNode.ReadByJobs;
+        if (locked != _locked && _toolbar is not null)
+        {
+            _locked = locked;
+            foreach (var control in _toolbar.FindChildren("*", "", true, false))
+            {
+                if (control is BaseButton button)
+                    button.Disabled = locked;
+                else if (control is SpinBox box)
+                    box.Editable = !locked;
+            }
+
+            _toolbar.TooltipText = locked ? "A job is reading the terrain: its tools come back when it is done." : "";
+        }
+
+        if (locked && _stroking)
+            EndStroke();
         if (!_stroking)
             return;
         if (!Active)

@@ -564,8 +564,25 @@ public partial class TerrainNode : Node3D, ITerrainGround
     }
 
     // Add Region pressed: a flat region at New Region, one step to undo; data and a folder for it first, if it has none.
+    /// <summary>
+    /// Whether some job (of any plugin) is reading a terrain now, on a thread of its own: while it is,
+    /// none is to be edited. Kept on the main loop by such jobs, as a count, so no plugin need know another.
+    /// </summary>
+    public static bool ReadByJobs => Engine.GetMainLoop().GetMeta("unpleasant_terrain_readers", 0).AsInt32() > 0;
+
+    /// <summary>Whether it may be edited now; if not, says why in the Output.</summary>
+    public static bool MayEdit(string what)
+    {
+        if (!ReadByJobs)
+            return true;
+        GD.PushWarning($"Terrain: {what} has to wait; a job is reading the terrain (see the Output for its progress).");
+        return false;
+    }
+
     private void AddNewRegion()
     {
+        if (!MayEdit("Add Region"))
+            return;
         var at = NewRegion;
         var half = RegionMapSize / 2;
         if (at.X < -half || at.Y < -half || at.X >= half || at.Y >= half)

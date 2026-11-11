@@ -91,6 +91,15 @@ public partial class TerrainNode
         var colors = Small(region.Colors, cells);
         var firstX = (region.Location.X - _overviewFirst.X) * cells + 1;
         var firstZ = (region.Location.Y - _overviewFirst.Y) * cells + 1;
+        // Outside what the overview covers (a region added since it was made, or none made yet): made
+        // again from every region, rather than written past its end.
+        if (firstX < 1 || firstZ < 1 || firstX + cells > _overviewTexels - 1 || firstZ + cells > _overviewTexels - 1
+            || heights.Length < cells * cells * 4 || control.Length < cells * cells * 4 || colors.Length < cells * cells * 4)
+        {
+            _overviewWhole = true;
+            return;
+        }
+
         for (var z = 0; z < cells; z++)
         {
             var row = (firstZ + z) * _overviewTexels + firstX;
@@ -155,10 +164,25 @@ public partial class TerrainNode
         _overviewWait = OverviewDelay;
     }
 
+    /// <summary>Whether the overview is to be made again from every region (one has turned up outside it).</summary>
+    private bool _overviewWhole;
+
     private void ProcessOverview(double delta)
     {
         if (!_overviewDirty || (_overviewWait -= delta) > 0)
             return;
+        if (_overviewWhole)
+        {
+            _overviewWhole = false;
+            var regions = _data!.Locations.Select(_data.Region).OfType<TerrainRegion>().ToList();
+            if (regions.All(r => r.Heights is not null && r.Control is not null && r.Colors is not null))
+            {
+                SetUpOverview(Drawn.GetRid(), regions);
+                _overviewDirty = false;
+                return;
+            }
+        }
+
         GiveOverview(Drawn.GetRid());
     }
 

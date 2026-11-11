@@ -100,6 +100,20 @@ public partial class TerrainNode
             return;
         }
 
+        // Its own arrays not the size it says (seen once, cause not found yet): made again whole, and said why.
+        var texels = _overviewTexels * _overviewTexels;
+        if (_overviewHeights.Length < texels || _overviewControl.Length < texels || _overviewColors.Length < texels * 4)
+        {
+            if (!_overviewMismatchTold)
+            {
+                _overviewMismatchTold = true;
+                GD.PushWarning($"{Name}: the terrain overview's arrays did not match its size (texels {_overviewTexels}, heights {_overviewHeights.Length}, control {_overviewControl.Length}, colors {_overviewColors.Length}, region {region.Location}, first {_overviewFirst}, cells {cells}, shown {_overview}); making it again.");
+            }
+
+            _overviewWhole = true;
+            return;
+        }
+
         for (var z = 0; z < cells; z++)
         {
             var row = (firstZ + z) * _overviewTexels + firstX;
@@ -166,6 +180,9 @@ public partial class TerrainNode
 
     /// <summary>Whether the overview is to be made again from every region (one has turned up outside it).</summary>
     private bool _overviewWhole;
+
+    /// <summary>Whether a mismatch of its arrays has been told of already (once is enough to find why).</summary>
+    private bool _overviewMismatchTold;
 
     private void ProcessOverview(double delta)
     {
